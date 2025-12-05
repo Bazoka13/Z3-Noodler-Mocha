@@ -168,7 +168,6 @@ namespace smt::noodler {
 
         // Gather relevant word (dis)equations (and transducers that occur in them) to noodler formula
         Formula instance = get_formula_from_relevant(symbols_in_formula);
-        // STRACE("mocha-reduce",tout<<instance.to_string()<<"--\n";);
         // Create automata assignment for the formula
         AutAssignment aut_assignment{create_aut_assignment_for_formula(instance, symbols_in_formula)};
 
@@ -207,8 +206,8 @@ namespace smt::noodler {
 
         // try Nielsen transformation (if enabled) to solve
         if(m_params.m_try_nielsen && is_nielsen_suitable(instance, init_length_sensitive_vars)) {
-            // STRACE("mocha-nielsen",tout<<"nielsen starting\n";);
             lbool result = run_nielsen(instance, aut_assignment, init_length_sensitive_vars);
+            
             if(result == l_true) {
                 return FC_DONE;
             } else if(result == l_false) {
@@ -217,7 +216,7 @@ namespace smt::noodler {
         }
 
         // we do not put into dec_proc directly, because we might do underapproximation that saves into dec_proc
-        std::shared_ptr<DecisionProcedure> main_dec_proc = std::make_shared<DecisionProcedure>(instance, aut_assignment, init_length_sensitive_vars, m_params, conversions);
+        std::shared_ptr<DecisionProcedure> main_dec_proc = std::make_shared<DecisionProcedure>(instance, aut_assignment, init_length_sensitive_vars, m_params, conversions, m);
 
         // the skip_len_sat preprocessing rule requires that the input formula is length satisfiable
         // --> before we apply the preprocessing, we need to be sure that it is indeed true.
@@ -264,7 +263,6 @@ namespace smt::noodler {
         }
 
         dec_proc = std::move(main_dec_proc);
-        // STRACE("mocha-reduce",tout<<"preprocess starting\n";);
         STRACE(str, tout << "Starting preprocessing" << std::endl);
         lbool result = dec_proc->preprocess(PreprocessType::PLAIN, this->var_eqs.get_equivalence_bt(aut_assignment));
         if (result == l_false) {
@@ -289,6 +287,7 @@ namespace smt::noodler {
 
         expr_ref block_len(m.mk_false(), m);
         while (true) {
+            util::check_limit(m);
             result = dec_proc->compute_next_solution();
             if (result == l_true) {
                 auto [noodler_lengths, precision] = dec_proc->get_lengths();
@@ -470,7 +469,6 @@ namespace smt::noodler {
         obj_hashtable<expr> vars;
         util::get_str_variables(ex, this->m_util_s, this->m, vars);
         for(expr * const v : vars) {
-
             BasicTerm vterm(BasicTermType::Variable, to_app(v)->get_name().str());
             this->var_name.insert({vterm, expr_ref(v, this->m)});
         }
@@ -674,8 +672,7 @@ namespace smt::noodler {
 
     //usless because any normal word equations(only one varible and strings) can be reduced and use add_kmp
     void theory_str_noodler::solve_len_eq(){
-        // STRACE("mocha-len",tout<<"solve_len_eq starting"<<"\n";);
-        //todo: only focus on normal word equations now.
+                //todo: only focus on normal word equations now.
         for(const auto& eq : this->m_word_eq_todo_rel) {
             expr_ref left_side = eq.first;
             expr_ref right_side = eq.second;
@@ -696,8 +693,7 @@ namespace smt::noodler {
                     co_l[ex->get_small_id()]+=1;
                     var = ex;
                     var_id = ex->get_small_id();
-                    // STRACE("mocha-debug",tout<<mk_pp(var,m)<<" "<<var_id<<"\n";);
-                }else if(m_util_s.str.is_string(ex)){
+                    }else if(m_util_s.str.is_string(ex)){
                     sum_l += m_util_s.str.max_length(ex);
                 }else{
                     fl=1;
@@ -726,30 +722,25 @@ namespace smt::noodler {
             if(co_l.empty()&&co_r.empty()&&sum_l!=sum_r){
                 expr_ref unsat_core(m.mk_true(), m);
                 unsat_core = m.mk_not(unsat_core);
-                // STRACE("mocha-debug",tout<<"First unsat: "<<mk_pp(eq.first,m)<<"=="<<mk_pp(eq.second,m)<<"\n";);
                 add_axiom({mk_literal(unsat_core)});
             }else if(!co_l.empty()&&co_r.empty()){
                 sum_r-=sum_l;
                 if(sum_r<0){
                     expr_ref unsat_core(m.mk_true(), m);
                     unsat_core = m.mk_not(unsat_core);
-                    // STRACE("mocha-debug",tout<<"Second unsat: "<<mk_pp(eq.first,m)<<"=="<<mk_pp(eq.second,m)<<"\n";);
                     add_axiom({mk_literal(unsat_core)});
                 }else if(sum_r>0){
                     auto col=co_l[var_id];
                     if(sum_r%col){
                         expr_ref unsat_core(m.mk_true(), m);
                         unsat_core = m.mk_not(unsat_core);
-                        // STRACE("mocha-debug",tout<<"Third unsat: "<<mk_pp(eq.first,m)<<"=="<<mk_pp(eq.second,m)<<"\n";);
                         add_axiom({mk_literal(unsat_core)});
                     }else{
                         auto len_eq = m_util_a.mk_eq(m_util_s.str.mk_length(var), m_util_a.mk_int(int(sum_r/col)));
-                        // STRACE("mocha-len",tout<<mk_pp(len_eq,m)<<"\n";);
                         add_axiom({mk_literal(expr_ref(len_eq,m))});
                     }   
                 }else{
                     auto len_eq = m_util_a.mk_eq(m_util_s.str.mk_length(var), m_util_a.mk_int(int(sum_r)));
-                    // STRACE("mocha-len",tout<<mk_pp(len_eq,m)<<"\n";);
                     add_axiom({mk_literal(expr_ref(len_eq,m))});
                 }
             }else{
@@ -760,35 +751,27 @@ namespace smt::noodler {
                 }
                 col-=cor;
                 sum_r-=sum_l;
-                // STRACE("mocha-len",tout<<"sum_r is "<<sum_r<<"\n";);
                 if(sum_r<0){
                     expr_ref unsat_core(m.mk_true(), m);
                     unsat_core = m.mk_not(unsat_core);
-                    // STRACE("mocha-debug",tout<<"Forth unsat: "<<mk_pp(eq.first,m)<<"=="<<mk_pp(eq.second,m)<<"\n";);
                     add_axiom({mk_literal(unsat_core)});
                 }else if(sum_r>0){
                     if(col==0||sum_r%col){
                         expr_ref unsat_core(m.mk_true(), m);
                         unsat_core = m.mk_not(unsat_core);
-                        // STRACE("mocha-debug",tout<<"Fifth unsat: "<<mk_pp(eq.first,m)<<"=="<<mk_pp(eq.second,m)<<"\n";);
-                        add_axiom({mk_literal(unsat_core)});
+                         add_axiom({mk_literal(unsat_core)});
                     }else{
                         auto len_eq = m_util_a.mk_eq(m_util_s.str.mk_length(var), m_util_a.mk_int(int(sum_r/col)));
-                        // STRACE("mocha-len",tout<<mk_pp(len_eq,m)<<"\n";);
                         add_axiom({mk_literal(expr_ref(len_eq,m))});
                         // zstring ss = zstring("d");
                         // auto test_eq = m_util_a.mk_eq(var,m_util_s.str.mk_string(ss));
                         // this->m_word_eq_todo_rel.push_back({expr_ref(var,m),expr_ref(m_util_s.str.mk_string(ss),m)});
-                        // STRACE("mocha-len",tout<<mk_pp(this->m_word_eq_todo_rel.back().first,m)<<"\n";);
-                        // break;
+                       // break;
                         // add_axiom({mk_literal(expr_ref(test_eq,m))});
                     }   
                 }else{
                     if(col){
                         auto len_eq = m_util_a.mk_eq(m_util_s.str.mk_length(var), m_util_a.mk_int(int(sum_r)));
-                        // STRACE("mocha-len",tout<<mk_pp(len_eq,m)<<"\n";);
-                        // STRACE("mocha-len",tout<<mk_pp(eq.first,m)<<"=="<<mk_pp(eq.second,m)<<"\n";);
-                    
                         add_axiom({mk_literal(expr_ref(len_eq,m))});
                     }
                 }
@@ -855,11 +838,10 @@ namespace smt::noodler {
     lbool theory_str_noodler::solve_underapprox(const Formula& instance, const AutAssignment& aut_assignment,
                                                 const std::unordered_set<BasicTerm>& init_length_sensitive_vars,
                                                 std::vector<TermConversion> conversions) {
-        dec_proc = std::make_shared<DecisionProcedure>(instance, aut_assignment, init_length_sensitive_vars, m_params, conversions);
+        dec_proc = std::make_shared<DecisionProcedure>(instance, aut_assignment, init_length_sensitive_vars, m_params, conversions, m);
         if (dec_proc->preprocess(PreprocessType::UNDERAPPROX, this->var_eqs.get_equivalence_bt(aut_assignment)) == l_false) {
             return l_undef;
         }
-
         dec_proc->init_computation();
         this->statistics.at("underapprox").num_start++;
 
@@ -1000,7 +982,7 @@ namespace smt::noodler {
 
     lbool theory_str_noodler::run_nielsen(const Formula& instance, const AutAssignment& aut_assignment, const std::unordered_set<BasicTerm>& init_length_sensitive_vars) {
         STRACE(str, tout << "Trying nielsen" << std::endl);
-        dec_proc = std::make_shared<NielsenDecisionProcedure>(instance, aut_assignment, init_length_sensitive_vars, m_params);
+        dec_proc = std::make_shared<NielsenDecisionProcedure>(instance, aut_assignment, init_length_sensitive_vars, alphabet_of_var,m_params);
         dec_proc->preprocess();
         expr_ref block_len(m.mk_false(), m);
         dec_proc->init_computation();
@@ -1009,8 +991,8 @@ namespace smt::noodler {
         while (true) {
             lbool result = dec_proc->compute_next_solution();
             if (result == l_true) {
+                
                 expr_ref lengths = len_node_to_z3_formula(dec_proc->get_lengths().first);
-                // STRACE("mocha-nielsen-len",tout<<mk_pp(lengths.get(),m)<<"\n";);
                 if (check_len_sat(lengths) == l_true) {
                     sat_handling(lengths);
                     this->statistics.at("nielsen").num_finish++;
@@ -1124,7 +1106,7 @@ namespace smt::noodler {
         regex::Alphabet alph(get_symbols_from_relevant());
         // to each var x we map all the regexes RE where we have (x in RE) + bool that is true if it is (x not in RE)
         std::map<BasicTerm, std::vector<std::pair<bool,app*>>> var_to_list_of_regexes_and_complement_flag;
-
+        STRACE(str, tout << "trying multiple regex membership heuristic on memb" << std::endl;);
         // collect from relevant memberships
         for (const auto &membership: m_membership_todo_rel) {
             BasicTerm var = util::get_variable_basic_term(std::get<0>(membership));
@@ -1132,7 +1114,7 @@ namespace smt::noodler {
             app* reg = to_app(std::get<1>(membership));
             var_to_list_of_regexes_and_complement_flag[var].push_back(std::make_pair(!std::get<2>(membership), reg));
         }
-
+        STRACE(str, tout << "trying multiple regex membership heuristic on diseq" << std::endl;);
         // we assume that is_mult_membership_heur was run before, therefore we have only disequations
         //   x != str_literal
         // i.e., one var on left and some string literal on right, we can replace this with (x not in {str_literal})
@@ -1142,7 +1124,7 @@ namespace smt::noodler {
             app* reg = to_app(diseq.second);
             var_to_list_of_regexes_and_complement_flag[var].push_back(std::make_pair(true, reg));
         }
-
+        STRACE(str, tout << "trying multiple regex membership heuristic on eq" << std::endl;);
         // we assume that is_mult_membership_heur was run before, therefore we have only equations
         //   x == str_literal
         // i.e., one var on left and some string literal on right, we can replace this with (x in {str_literal})
@@ -1152,11 +1134,12 @@ namespace smt::noodler {
             app* reg = to_app(eq.second);
             var_to_list_of_regexes_and_complement_flag[var].push_back(std::make_pair(false, reg));
         }
-
-        dec_proc = std::make_shared<MultMembHeuristicProcedure>(var_to_list_of_regexes_and_complement_flag, alph, m_util_s, m, m_params.m_produce_models);
+        STRACE(str, tout << "trying multiple regex membership heuristic fin" << std::endl;);
+        dec_proc = std::make_shared<MultMembHeuristicProcedure>(var_to_list_of_regexes_and_complement_flag, alph, m_util_s, m, memorized_nfa,m_params.m_produce_models);
         this->statistics.at("multi-memb-heur").num_start++;
         lbool result = dec_proc->compute_next_solution();
-
+        STRACE(str, tout << "memorized_nfa size is " << memorized_nfa.size() << std::endl;);
+        STRACE(str, tout << "exiting multiple regex membership heuristic" << std::endl;);
         if(result != l_undef) this->statistics.at("multi-memb-heur").num_finish++;
         return result;
     }

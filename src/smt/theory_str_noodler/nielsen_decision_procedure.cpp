@@ -2,7 +2,7 @@
 #include <utility>
 #include <algorithm>
 
-#include <mata/nfa/strings.hh>
+#include <mata/applications/strings.hh>
 
 #include "util.h"
 #include "aut_assignment.h"
@@ -34,15 +34,15 @@ namespace smt::noodler {
         prep_handler.separate_eqs();
         prep_handler.generate_identities();
         prep_handler.propagate_variables();
+        prep_handler.calc_alphabet_and_split(alphabet_of_var);
         prep_handler.remove_trivial();
         
-        // STRACE("mocha-nielsen-pre",tout<<"--------\n";);
-        // STRACE("mocha-nielsen-pre",tout<<prep_handler.get_modified_formula().to_string()<<"\n";);
         
         // Refresh the instance
         this->init_aut_ass = prep_handler.get_aut_assignment();
         this->init_length_sensitive_vars = prep_handler.get_len_variables();
         this->formula = prep_handler.get_modified_formula();
+        
         this->formula = this->formula.split_literals();
 
         return l_undef;
@@ -54,7 +54,6 @@ namespace smt::noodler {
      * @return True -> satisfiable
      */
     lbool NielsenDecisionProcedure::compute_next_solution() {
-        // STRACE("mocha-nielsen", tout << "next solution\n";);
         // if the compute_next_solution was called for the first time
         if(this->graphs.size() == 0) {
 
@@ -73,6 +72,7 @@ namespace smt::noodler {
                 // create Nielsen graph and trim it
                 // we may early terminate only if it is not necessary to generate models
                 NielsenGraph graph = generate_from_formula(fle, this->init_length_sensitive_vars.empty(), this->m_params.m_produce_models || !this->init_length_sensitive_vars.empty(), is_sat);
+                
                 if (!is_sat) {
                     // if some Nielsen graph is unsat --> unsat
                     return l_false;
@@ -80,7 +80,6 @@ namespace smt::noodler {
                 graph = graph.trim();
                 
                 
-                // STRACE("mocha-nielsen-graph",tout<<graph.get_edges().size()<<"\n";);
                 this->graphs.push_back(graph);
 
                 // create a counter system from the Nielsen graph a condensate it
@@ -224,16 +223,39 @@ namespace smt::noodler {
      * @return std::set<NielsenLabel> All possible Nielsen rewriting rules
      */
     std::set<NielsenLabel> NielsenDecisionProcedure::get_rules_from_pred(const Predicate& pred) const {
-        
         Concat left = pred.get_left_side();
         Concat right = pred.get_right_side();
         std::set<NielsenLabel> ret;
-        size_t szl = left.size(),szr=right.size();
+        size_t szl = left.size(),szr = right.size();
         if(left.size() > 0 && left[0].is_variable() && right.size() > 0) {
-            ret.insert({left[0], Concat({right[0], left[0]})});
+            if(!right[0].is_variable()){
+                if(alphabet_of_var.find(left[0].get_name().encode()) != alphabet_of_var.end()) {
+                    auto s = alphabet_of_var.at(left[0].get_name().encode());
+                    std::string t = right[0].to_string();
+                    size_t t_len = t.length();
+                    t = t.substr(1, t_len - 2);
+                    if(s.find(t) != s.end()) {
+                        ret.insert({left[0], Concat({right[0], left[0]})});
+                    }
+                }else
+                    ret.insert({left[0], Concat({right[0], left[0]})});
+            }else
+                ret.insert({left[0], Concat({right[0], left[0]})});
         }
         if(right.size() > 0 && right[0].is_variable() && left.size() > 0) {
-            ret.insert({right[0], Concat({left[0], right[0]})});
+            if(!left[0].is_variable()){
+                if(alphabet_of_var.find(right[0].get_name().encode()) != alphabet_of_var.end()) {
+                    auto s = alphabet_of_var.at(right[0].get_name().encode());
+                    std::string t = left[0].to_string();
+                    size_t t_len = t.length();
+                    t = t.substr(1, t_len - 2);
+                    if(s.find(t) != s.end()) {
+                        ret.insert({right[0], Concat({left[0], right[0]})});
+                    }
+                }else
+                    ret.insert({right[0], Concat({left[0], right[0]})});
+            }else
+                ret.insert({right[0], Concat({left[0], right[0]})});
         }
         if(left.size() > 0 && left[0].is_variable()) {
             ret.insert({left[0], Concat()});
@@ -241,7 +263,7 @@ namespace smt::noodler {
         if(right.size() > 0 && right[0].is_variable()) {
             ret.insert({right[0], Concat()});
         }
-
+        
         return ret;
     }
 
@@ -259,18 +281,13 @@ namespace smt::noodler {
         std::set<Formula> generated;
         // use priority queue to prefer smaller formulae (higher probability to reach a final node)
         auto cmp = [](const auto& pr1, const auto& pr2) { 
-            // int sz1=pr1.second.get_predicates()[pr1.first].get_vars().size();
-            // if(sz1!=1)sz1=2;
-            // int sz2=pr2.second.get_predicates()[pr2.first].get_vars().size();
-            // if(sz2!=1)sz2=2;
-            // if(sz1!=sz2)return sz1>sz2;
             return NielsenDecisionProcedure::get_formula_cost(pr1.second) > NielsenDecisionProcedure::get_formula_cost(pr2.second); 
         };
         // priority queue sorted by the cost of formula
         std::priority_queue<std::pair<size_t, Formula>, std::vector<std::pair<size_t, Formula>>, decltype(cmp)> worklist(cmp);
-        worklist.push({0, trim_formula(init)}); 
         graph.set_init(init);
 
+        worklist.push({0, trim_formula(init)});
         is_sat = false;
         while(!worklist.empty()) {
             std::pair<size_t, Formula> pr = worklist.top();
@@ -289,7 +306,6 @@ namespace smt::noodler {
             if(predicates[index].get_vars().size()==1 && is_one_unsat(predicates[index])){
                 continue;  
             }
-            STRACE(mocha_nielsen,tout<<predicates[index].to_string()<<"~\n";);
             for(; index < predicates.size(); index++) {
                 if(!is_pred_sat(predicates[index])) {
                     break;
@@ -306,6 +322,7 @@ namespace smt::noodler {
             std::set<NielsenLabel> rules = get_rules_from_pred(predicates[index]);
             for(const auto& label : rules) {
                 Formula rpl = trim_formula(pr.second.replace(Concat({label.first}), label.second));
+                if(!add_edges)rpl = trans_formula(graph,rpl);
                 if(add_edges) {
                     graph.add_edge(pr.second, rpl, label);
                 }
@@ -319,6 +336,112 @@ namespace smt::noodler {
         }
 
         return graph;
+    }
+
+    Formula NielsenDecisionProcedure::trans_formula(NielsenGraph &graph, const Formula& formula) const {
+        Formula res;
+        std::set<NielsenLabel> ret;
+        for(const Predicate& pred : formula.get_predicates()){
+            Concat left = pred.get_left_side();
+            Concat right = pred.get_right_side();
+            size_t szl = left.size(),szr = right.size();
+            std::map<BasicTerm, unsigned> occurLeft = pred.variable_count(Predicate::EquationSideType::Left);
+            std::map<BasicTerm, unsigned> occurRight = pred.variable_count(Predicate::EquationSideType::Right);
+            BasicTerm litTerm(BasicTermType::Literal, "");
+
+            bool allLeft = true;
+            bool allRight = true;
+            auto s = pred.get_vars();
+            size_t cnt = 0,cof = 0;
+            std::vector<BasicTerm> vars;
+            for(const auto& t : s) {
+                if(occurLeft[t] > occurRight[t]) allLeft = false,vars.push_back(t),cof=occurLeft[t]-occurRight[t],cnt+=1;
+                if(occurLeft[t] < occurRight[t]) allRight = false,vars.push_back(t),cof=occurRight[t]-occurLeft[t],cnt+=1;  
+            }
+            if(cnt==1&&cof){
+                size_t var_len = allLeft?occurLeft[litTerm]-occurRight[litTerm]:occurRight[litTerm]-occurLeft[litTerm];
+                var_len/=cof;
+                if(szl>=1&&left[0].is_variable() && occurLeft[left[0]]!=occurRight[left[0]]){
+                    std::vector<BasicTerm> rep;
+                    if(szr>=var_len){
+                        bool flag = true;
+                        for(size_t i=0;i<var_len;i++){
+                            rep.push_back(right[i]);
+                            if(right[i].is_variable())flag = false;
+                        }
+                        if(flag){
+                            ret.insert({left[0], Concat(rep)});
+                            break;
+                        }
+                    }
+                }
+                if(szr>=1&&right[0].is_variable() && occurLeft[right[0]]!=occurRight[right[0]]){
+                    std::vector<BasicTerm> rep;
+                    if(szl>=var_len){
+                        bool flag = true;
+                        for(size_t i=0;i<var_len;i++){
+                            rep.push_back(left[i]);
+                            if(left[i].is_variable())flag = false;
+                        }
+                        if(flag){
+                            ret.insert({right[0], Concat(rep)});
+                            break;
+                        }
+                    }
+                }
+                if(szl>=1&&left[szl-1].is_variable() && occurLeft[left[szl-1]]!=occurRight[left[szl-1]]){
+                    std::vector<BasicTerm> rep;
+                    if(szr>=var_len){
+                        bool flag = true;
+                        for(size_t i=szr-1;i>szr-1-var_len;i--){
+                            rep.push_back(right[i]);
+                            if(right[i].is_variable())flag = false;
+                        }
+                        std::reverse(rep.begin(), rep.end());
+                        if(flag){
+                            ret.insert({left[szl-1], Concat(rep)});
+                            break;
+                        }
+                    }
+                }
+                if(szr>=1&&right[szr-1].is_variable() && occurLeft[right[szr-1]]!=occurRight[right[szr-1]]){
+                    std::vector<BasicTerm> rep;
+                    if(szl>=var_len){
+                        bool flag = true;
+                        for(size_t i=szl-1;i>szl-1-var_len;i--){
+                            rep.push_back(left[i]);
+                            if(left[i].is_variable())flag = false;
+                        }
+                        std::reverse(rep.begin(), rep.end());
+                        if(flag){
+                            ret.insert({right[szr-1], Concat(rep)});
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if(occurLeft[litTerm]==occurRight[litTerm]){
+                if(allRight){
+                    for(auto& t : vars) {
+                        ret.insert({t, Concat()}); 
+                    }
+                }
+                if(allLeft){
+                    for(auto& t : vars) {
+                        ret.insert({t, Concat()}); 
+                    }
+                }
+            }
+        }
+        res = formula;
+        for(const auto& l : ret){
+            auto res2=res.replace(Concat({l.first}), l.second);
+            res = res2;
+        }
+        if(ret.empty())return formula;
+        res.var_length_manager=formula.var_length_manager;
+        return trim_formula(res);
     }
 
     /**
@@ -351,6 +474,7 @@ namespace smt::noodler {
                     Concat(params[1].begin()+i, params[1].begin() + right + 1)
                 ));
         }
+        ret.var_length_manager = formula.var_length_manager;
         return ret;
     }
 
@@ -375,6 +499,25 @@ namespace smt::noodler {
         }
         if(left.size() > 0 && right.size() > 0 && right[right.size() - 1].is_literal() && left[left.size() - 1].is_literal() && right[right.size() - 1] != left[left.size() - 1]) {
             return true;
+        }
+        size_t szl = left.size(),szr = right.size();
+        std::map<BasicTerm, unsigned> mpl,mpr;
+        size_t constl = 0,constr = 0;
+        for(size_t i =0;i<std::min(szl,szr);i++){
+            if(left[i].is_literal()&&right[i].is_literal()&&left[i]!=right[i]
+                &&constl==constr&&mpl==mpr)return true;
+            if(left[i].is_variable())mpl[left[i]]++;
+            if(right[i].is_variable())mpr[right[i]]++;
+            if(left[i].is_literal())constl++;
+            if(right[i].is_literal())constr++;
+        }
+        for(size_t i =0;i<std::min(szl,szr);i++){
+            if(left[szl-1-i].is_literal()&&right[szr-1-i].is_literal()&&left[szl-1-i]!=right[szr-1-i]
+                &&constl==constr&&mpl==mpr)return true;
+            if(left[szl-1-i].is_variable())mpl[left[szl-1-i]]++;
+            if(right[szr-1-i].is_variable())mpr[right[szr-1-i]]++;
+            if(left[szl-1-i].is_literal())constl++;
+            if(right[szr-1-i].is_literal())constr++;
         }
         return false;
     }
@@ -583,7 +726,6 @@ namespace smt::noodler {
      */
     bool NielsenDecisionProcedure::get_label_sl_formula(const CounterLabel& lab, const std::map<BasicTerm, BasicTerm>& in_vars, BasicTerm& out_var, std::vector<LenNode>& conjuncts) {
         out_var = util::mk_noodler_var_fresh(lab.left.get_name().encode());
-
         if(lab.sum.size() == 1) {
             // nielsen: incomplete
             return false;
@@ -616,7 +758,6 @@ namespace smt::noodler {
         if(path.labels.size() == 0) {
             return true;
         }
-
         // there is less edges than vertices; the first one has not self-loop (the rule is of the form x := 0)
         for(size_t i = 1; i < path.nodes.size(); i++) {
             auto it = path.self_loops.find(path.nodes[i]);
@@ -641,6 +782,7 @@ namespace smt::noodler {
                 actual_var_map.insert_or_assign(it->second.left, sl_var);
             } 
         }
+
 
         return true;
     }
@@ -668,8 +810,6 @@ namespace smt::noodler {
         return true;
     }
     bool NielsenDecisionProcedure::is_one_unsat(const Predicate& pred) {
-        // return false;
-        // STRACE(mocha_nielsen,tout<<pred.to_string()<<" enter\n";);
         std::map<BasicTerm, unsigned> occurLeft = pred.variable_count(Predicate::EquationSideType::Left);
         std::map<BasicTerm, unsigned> occurRight = pred.variable_count(Predicate::EquationSideType::Right);
         BasicTerm litTerm(BasicTermType::Literal, "");
@@ -680,10 +820,8 @@ namespace smt::noodler {
         }
         // length is sat and bz lemma is sat
         // n|V|=m
-        // STRACE(mocha_nielsen,tout<<pred.to_string()<<"\n";);
         if(n==0||m==0)return false;
         n = m/n;
-        // STRACE(mocha_nielsen,tout<<"len is: "<<n<<"\n";);
         std::vector<zstring> v;
         for(size_t i=0;i<n;++i){
             v.push_back(zstring(""));
@@ -694,10 +832,6 @@ namespace smt::noodler {
         const std::vector<BasicTerm> left_side = pred.get_left_side();
         const std::vector<BasicTerm> right_side = pred.get_right_side();
         while(lidx<left_side.size()&&ridx<right_side.size()){
-            // STRACE(mocha_nielsen,tout<<"Left index is "<<lidx<<" and Right index is "<<ridx<<"\n";);
-            // STRACE(mocha_nielsen,tout<<"Left pos is "<<lpos<<" and Right pos is "<<rpos<<"\n";);
-            // STRACE(mocha_nielsen,tout<<"Left element is "<<left_side[lidx].to_string()<<" and Right is "<<right_side[ridx].to_string()<<"\n";);
-            // STRACE(mocha_nielsen,tout<<"\n";);
             if(left_side[lidx].is_literal()&&right_side[ridx].is_literal()){
                 if(!left_side[lidx].equals(right_side[ridx]))return true;
                 ++lidx;
@@ -739,9 +873,10 @@ namespace smt::noodler {
         bool allRight = true;
         std::vector<size_t> tmp;
         auto s = pred.get_vars();
+        size_t cnt = 0;
         for(const auto& t : s) {
-            if(occurLeft[t] > occurRight[t]) allLeft = false,tmp.push_back(occurLeft[t]-occurRight[t]);
-            if(occurLeft[t] < occurRight[t]) allRight = false,tmp.push_back(occurRight[t]-occurLeft[t]);  
+            if(occurLeft[t] > occurRight[t]) allLeft = false,tmp.push_back(occurLeft[t]-occurRight[t]),cnt+=1;
+            if(occurLeft[t] < occurRight[t]) allRight = false,tmp.push_back(occurRight[t]-occurLeft[t]),cnt+=1;  
         }
         for(size_t pos = 1;pos<tmp.size();pos++){
             tmp[0]=u_gcd(tmp[0],tmp[pos]);

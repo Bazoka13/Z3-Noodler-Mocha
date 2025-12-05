@@ -12,7 +12,7 @@
 #include <unordered_set>
 #include <vector>
 #include <mata/nft/nft.hh>
-#include <mata/nft/strings.hh>
+#include <mata/applications/strings.hh>
 
 #include "params/smt_params.h"
 #include "ast/arith_decl_plugin.h"
@@ -53,6 +53,11 @@ namespace smt::noodler::util {
      * @param errMsg Error message
      */
     void throw_error(std::string errMsg);
+
+    /**
+     * @brief Check if we reached some resource limit (timeout) and throws error if yes
+     */
+    void check_limit(ast_manager& m);
 
     /**
     Get variables from a given expression @p ex. Append to the output parameter @p res.
@@ -158,6 +163,27 @@ namespace smt::noodler::util {
     mata::Word get_mata_word_zstring(const zstring& word);
 
     /**
+     * @brief Checks if the transducer contains an identity mapping for a word of given length (w,w).
+     *
+     * This function explores the transducer as a multi-tape automaton and checks if there exists a path
+     * from an initial state to a final state such that the sequence of symbols on all tapes is identical
+     * (i.e., the transducer realizes the identity relation for some word of the given length).
+     *
+     * The search is performed using BFS over a state space where each state consists of:
+     *   - the current automaton state
+     *   - the sequence of symbols read/written on each tape so far
+     *
+     * The function returns l_true if such a path exists, l_false if there is definitely no such path, l_undef otherwise.
+     * 
+     * TODO: the function cannot handle transducers with jump transitions.
+     *
+     * @param transducer The NFT (non-deterministic finite transducer) to check.
+     * @param length The length of the word to check for identity mapping.
+     * @return true if the transducer contains an identity mapping of the given length, false if there is surely no such mapping.
+     */
+    lbool contains_trans_identity(const mata::nft::Nft& transducer, unsigned length);
+
+    /**
      * @brief Create a vector of inclusions of the form left_sides[i] ⊆ right_sides[i] for all i.
      * 
      * Assumes that @p left_sides and @p right_sides have the same size.
@@ -167,6 +193,28 @@ namespace smt::noodler::util {
     void replace_dummy_symbol_in_transducer_with(mata::nft::Nft& transducer, const std::set<mata::Symbol>& symbols_to_replace_with);
 
     bool is_concatenation_of_literals(const std::vector<BasicTerm>& concatenation, zstring& literal);
+
+    /**
+     * @brief Get a word from each tape of @p nft of lengths from @p lengths starting from some initial state in @p potentional_initial_states and passing transitions based on @p num_of_transitions_passes
+     * 
+     * More specifically, if (w1, w2, ..., wn) is an accepting word of @p nft, then it is returned by this function if
+     *      - it starts in some state from @p potentional_initial_states
+     *      - |wi| == lengths[i] (n is the number of tapes and it must hold that lengths.size() == n)
+     *      - the accepting run must fulfill @p num_of_transitions_passes (see below)
+     * Transitions of @p nft can be mapped to some number in @p num_of_transitions_passes representing the number of times
+     * the transition needs to be taken on the accepting run. If a transition is not mapped, then it is assumed that the
+     * transition cannot be taken. Futhermore, two (or more) transitions t1 and t2 can share one number l. This means that
+     * in the accepting run, t1 and t2 must be taken l number of times combined.
+     * 
+     * If no such run exists, we return std::nullopt
+     * 
+     * @param nft Transducer whose accepting word we are looking for
+     * @param lengths Lengths of accepting words (lengths.size() must be equal to number of tapes of @p nft )
+     * @param potentional_initial_states One of these states must be the starting point of the accepting run (does not need to be a subset of nft.initial)
+     * @param num_of_transitions_passes Maps transitions of @p nft to number of the given transition must be taken in the accepting run combined
+     * @return std::optional<std::vector<mata::Word>> The accepting words or std::nullopt if none exist.
+     */
+    std::optional<std::vector<mata::Word>> get_word_from_nft(const mata::nft::Nft nft, const std::vector<unsigned>& lengths, const std::set<mata::nft::State>& potentional_initial_states, const std::map<mata::nft::Transition,std::shared_ptr<unsigned>>& num_of_transitions_passes);
 }
 
 #endif

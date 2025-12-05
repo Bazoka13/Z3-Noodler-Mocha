@@ -35,7 +35,7 @@ public:
     DecisionProcedureCUT(const Formula &equalities, AutAssignment init_aut_ass,
                          const std::unordered_set<BasicTerm>& init_length_sensitive_vars,
                          ast_manager& m, seq_util& m_util_s, arith_util& m_util_a, const BasicTermEqiv& len_eq_vars, const theory_str_noodler_params& par
-    ) : DecisionProcedure(equalities, std::move(init_aut_ass), init_length_sensitive_vars, par, {}) {}
+    ) : DecisionProcedure(equalities, std::move(init_aut_ass), init_length_sensitive_vars, par, {}, m) {}
 
     using DecisionProcedure::compute_next_solution;
     using DecisionProcedure::get_lengths;

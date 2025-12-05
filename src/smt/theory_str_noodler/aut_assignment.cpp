@@ -10,7 +10,7 @@ namespace smt::noodler {
     LenNode AutAssignment::get_lengths(const mata::nfa::Nfa& aut, const BasicTerm& var) {
         // each (c1, c2) from following set represents the lengths of automaton for var
         // where we take c1 + k*c2 for each k >= 0
-        std::set<std::pair<int, int>> aut_constr = mata::strings::get_word_lengths(aut);
+        std::set<std::pair<int, int>> aut_constr = mata::applications::strings::get_word_lengths(aut);
 
         LenNode res(LenFormulaType::FALSE, {});
         for(const auto& cns : aut_constr) { // for each (c1, c2) representing lengths of var

@@ -88,10 +88,16 @@ namespace smt::noodler {
 
         // variables whose lengths are important
         obj_hashtable<expr> len_vars;
+        // string terms s that are under (str.len s) at the beginning (we need to add them to len_vars but we do not have their vars yet)
+        obj_hashtable<expr> initial_len_expressions;
 
         // used in final_check_eh, maps noodler string variables to z3 string variables
         // AND int variables to predicates they represent (see handle_conversion)
         std::map<BasicTerm, expr_ref> var_name;
+
+        std::map<unsigned, mata::nfa::Nfa> memorized_nfa;
+
+        std::map<std::string, std::unordered_set<std::string>> alphabet_of_var;
 
         // mapping predicates and function to variables that they substitute to
         obj_map<expr, expr*> predicate_replace;
@@ -339,6 +345,20 @@ namespace smt::noodler {
         void handle_replace_all(expr *e);
         void handle_replace_re_all(expr *e);
 
+        /**
+         * @brief Marks a string term @p e as length-aware
+         * If the string term has a corresponding variable in predicate_replace,
+         * the variable is added to len_vars, otherwise the string term is added
+         * to initial_len_expressions and when a corresponding variable is created
+         * (in relevant_eh), it should be added to len_vars.
+         * If @p e is a concatenation, we mark their arguments instead.
+         * 
+         * @param e The string term to mark
+         */
+        void mark_expression_as_length(expr *e);
+
+        void print_len_vars(std::ostream& os);
+
         // methods for assigning boolean values to predicates
         void assign_not_contains(expr *e);
 
@@ -450,7 +470,8 @@ namespace smt::noodler {
         std::vector<TermConversion> get_conversions_as_basicterms(AutAssignment &ass, const std::set<mata::Symbol>& noodler_alphabet);
 
         void solve_len_eq();
-        void add_kmp(const expr_ref& left_side,const expr_ref& right_side);
+        // void trim_eq(const expr_ref& left_side,const expr_ref& right_side);
+        void add_kmp(const expr_ref& left_side,const expr_ref& right_side,const bool have_membership);
         std::pair<bool, bool> check_pos(const expr_ref& pattern, const expr_ref& text);
         std::vector<std::pair<expr_ref,expr_ref>> build_new_eq(const std::pair<bool,bool> ll,const expr_ref_vector& l_vec,const expr_ref_vector& r_vec,const expr_ref_vector& l_t,const expr_ref_vector& r_t);
         void eq_extend(const expr_ref& left_side,const expr_ref& right_side);

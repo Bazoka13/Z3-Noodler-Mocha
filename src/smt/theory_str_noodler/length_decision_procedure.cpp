@@ -2,7 +2,7 @@
 #include <utility>
 #include <algorithm>
 
-#include <mata/nfa/strings.hh>
+#include <mata/applications/strings.hh>
 
 #include "util.h"
 #include "aut_assignment.h"

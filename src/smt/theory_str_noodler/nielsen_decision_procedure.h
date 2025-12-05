@@ -354,7 +354,7 @@ namespace smt::noodler {
         Formula formula;
         AutAssignment init_aut_ass;
         const theory_str_noodler_params& m_params;
-
+        std::map<std::string, std::unordered_set<std::string>> alphabet_of_var;
         std::vector<NielsenGraph> graphs {};
         std::vector<std::vector<Path<CounterLabel>>> length_paths;
         // model handler for generating models
@@ -372,6 +372,7 @@ namespace smt::noodler {
         }
         std::set<NielsenLabel> get_rules_from_pred(const Predicate& pred) const;
         NielsenGraph generate_from_formula(const Formula& formula, bool early_termination, bool add_edges, bool & is_sat) const;
+        Formula trans_formula(NielsenGraph& graph, const Formula& formula) const;
         Formula trim_formula(const Formula& formula) const;
         std::vector<Formula> divide_independent_formula(const Formula& formula) const;
 
@@ -463,10 +464,12 @@ namespace smt::noodler {
          */
         NielsenDecisionProcedure(const Formula &equalities, AutAssignment init_aut_ass,
                            const std::unordered_set<BasicTerm>& init_length_sensitive_vars,
+                           const std::map<std::string, std::unordered_set<std::string>> alphabet_of_var,
                            const theory_str_noodler_params& par
          ) : init_length_sensitive_vars{ init_length_sensitive_vars },
              formula { equalities },
              init_aut_ass{ init_aut_ass },
+             alphabet_of_var{alphabet_of_var},
              m_params(par), model_handler() { 
             
             // Nielsen currently supports only equations (no inequalities and not(contains))

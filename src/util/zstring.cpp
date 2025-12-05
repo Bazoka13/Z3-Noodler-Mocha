@@ -163,7 +163,7 @@ std::string zstring::encode() const {
 #define _flush() if (offset > 0) { buffer[offset] = 0; strm << buffer; offset = 0; }
     for (unsigned i = 0; i < m_buffer.size(); ++i) {
         unsigned ch = m_buffer[i];
-        if (ch < 32 || ch >= 128 || ('\\' == ch && i + 1 < m_buffer.size() && 'u' == m_buffer[i+1])) {
+        if (ch < 32 || ch >= 127 || ('\\' == ch && i + 1 < m_buffer.size() && 'u' == m_buffer[i+1])) {
             _flush();
             strm << "\\u{" << std::hex << ch << std::dec << '}';
         }
@@ -197,7 +197,6 @@ bool zstring::prefixof(zstring const& other) const {
 
 bool zstring::contains(zstring const& other) const {
     // use Sunday instead of brute-force
-    // TRACE("mocha-contains",tout<<"Sunday begins\n";);
     return subOf(*this,other);
     // if (other.length() > length()) return false;
     // unsigned last = length() - other.length();
@@ -218,7 +217,6 @@ int zstring::indexofu(zstring const& other, unsigned offset) const {
     if (offset > other.length() + offset) return -1;
     if (other.length() + offset > length()) return -1;
     int pos = idxOf(*this,other,offset);
-    // TRACE("mocha-contains",tout<<"Sunday begins\n";);
     if (pos >= 0) return pos;
     return -1;
     // unsigned last = length() - other.length();
@@ -235,7 +233,6 @@ int zstring::indexofu(zstring const& other, unsigned offset) const {
 }
 
 int zstring::last_indexof(zstring const& other) const {
-    // TRACE("mocha-contains",tout<<"Sunday begins\n";);
     if (other.length() == 0) return length();
     if (other.length() > length()) return -1;
     zstring const& other_reverse = other.reverse();

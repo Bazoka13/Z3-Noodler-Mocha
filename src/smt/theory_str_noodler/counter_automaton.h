@@ -11,7 +11,7 @@
 #include <compare>
 
 #include <mata/nfa/nfa.hh>
-#include <mata/nfa/strings.hh>
+#include <mata/applications/strings.hh>
 #include <mata/nfa/builder.hh>
 
 #include "formula.h"

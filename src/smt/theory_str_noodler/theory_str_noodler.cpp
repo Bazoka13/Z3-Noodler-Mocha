@@ -144,7 +144,9 @@ namespace smt::noodler {
                 obj_hashtable<app> lens;
                 util::get_len_exprs(ctx.get_asserted_formula(i), m_util_s, m, lens);
                 for (app* const a : lens) {
-                    util::get_str_variables(a, this->m_util_s, m, this->len_vars, &this->predicate_replace);
+                    expr* len_arg;
+                    VERIFY(m_util_s.str.is_length(a, len_arg));
+                    mark_expression_as_length(len_arg);
                 }
             }
             ctx.mark_as_relevant(ex);
@@ -190,6 +192,21 @@ namespace smt::noodler {
             )) {
             if(neg) ctx.mark_as_relevant(m.mk_not(expr));
             else ctx.mark_as_relevant(expr);
+        }
+
+        // in the initialization phase, we need to mark all string terms as relevant. We want to 
+        // prevent the situation when the string functions/predicates are axiomatized 
+        // on higher decision level than 0 (otherwise the axioms are lost).
+        // String propagation of the input formula works on level 0.
+        if(init && (
+            m_util_s.str.is_index(expr) || 
+            m_util_s.str.is_at(expr) ||
+            m_util_s.str.is_extract(expr) ||
+            m_util_s.str.is_replace(expr) || 
+            m_util_s.str.is_replace_all(expr) ||
+            m_util_s.str.is_replace_re_all(expr)
+        )) {
+            ctx.mark_as_relevant(expr);
         }
 
         // Check if we already axiomatized the expr
@@ -435,6 +452,11 @@ namespace smt::noodler {
                 add_axiom({mk_eq(fresh, e, false)});
             }
         }
+
+        if (initial_len_expressions.contains(n)) {
+            SASSERT(predicate_replace.find(n));
+            len_vars.insert(predicate_replace[n]);
+        }
     }
 
     /*
@@ -517,9 +539,7 @@ namespace smt::noodler {
                 eq_extend(l,r);
                 check_lyndon(l,r);
                 m_word_eq_todo.push_back({l, r});
-                if(!this->m_membership_todo.empty() ){
-                    add_kmp(l,r);
-                }
+                add_kmp(l,r,!this->m_membership_todo.empty());
                 // Optimization: If equation holds, then the lengths of both sides must be the same.
                 // We do this only if the equation (or its inverse) is already for sure relevant,
                 // otherwise adding the axiom might make the equation relevant (even though it is not).
@@ -806,7 +826,7 @@ namespace smt::noodler {
         // add the replacement charat -> v
         predicate_replace.insert(e, fresh.get());
         // update length variables
-        util::get_str_variables(s, this->m_util_s, m, this->len_vars, &this->predicate_replace);
+        mark_expression_as_length(s);
         this->len_vars.insert(x);
     }
 
@@ -846,7 +866,7 @@ namespace smt::noodler {
 
             // add the replacement substr -> v
             this->predicate_replace.insert(e, v.get());
-            util::get_str_variables(s, this->m_util_s, m, this->len_vars);
+            mark_expression_as_length(s);
             return;
         }
 
@@ -909,7 +929,7 @@ namespace smt::noodler {
              // add the replacement substr -> v
             this->predicate_replace.insert(e, v.get());
             // update length variables
-            util::get_str_variables(s, this->m_util_s, m, this->len_vars);
+            mark_expression_as_length(s);
             // add length |v| = l. This is not true entirely, because there could be a case that v = eps. 
             // but this case is handled by epsilon propagation preprocessing (this variable will not in the system
             // after that)
@@ -934,7 +954,7 @@ namespace smt::noodler {
             add_axiom({mk_eq(v, e, false)});
             this->predicate_replace.insert(e, v.get());
             // update length variables
-            util::get_str_variables(s, this->m_util_s, m, this->len_vars);
+            mark_expression_as_length(s);
             this->var_eqs.add(expr_ref(l, m), v);
             return;
         } else {
@@ -971,7 +991,7 @@ namespace smt::noodler {
         // add the replacement substr -> v
         this->predicate_replace.insert(e, v.get());
         // update length variables
-        util::get_str_variables(s, this->m_util_s, m, this->len_vars);
+        mark_expression_as_length(s);
         // add length |v| = l. This is not true entirely, because there could be a case that v = eps. 
         // but this case is handled by epsilon propagation preprocessing (this variable will not in the system
         // after that)
@@ -1137,7 +1157,7 @@ namespace smt::noodler {
         // add the replacement substr -> v
         this->predicate_replace.insert(e, v.get());
         // update length variables
-        util::get_str_variables(s, this->m_util_s, m, this->len_vars);
+        mark_expression_as_length(s);
         this->len_vars.insert(v);
         if(vars.size() > 0) {
             this->var_eqs.add(expr_ref(pred, m), xvar);
@@ -1228,9 +1248,8 @@ namespace smt::noodler {
         // str.replace "A" s t where a = "A"
         if(m_util_s.str.is_string(a, str_a) && str_a.length() == 1) {
             // s = emp -> v = t.a
-            // NOTE: if we use ~s_emp, this diseqation does not become relevant
-            // looks like ~s_emp should be added in new version Z3
-            add_axiom({~s_emp,mk_literal(m.mk_eq(v, mk_concat(t, a)))});
+            // NOTE: we add it twice in different forms because Z3 for some reason ignores one of them sometimes, see https://github.com/VeriFIT/z3-noodler/pull/236
+            add_axiom({~s_emp, mk_literal(m.mk_eq(v, mk_concat(t, a)))});
             add_axiom({mk_literal(m.mk_not(m.mk_eq(s, eps))), mk_literal(m.mk_eq(v, mk_concat(t, a)))});
             // s = a -> v = t
             // NOTE: if we use ~mk_eq(s, a), this diseqation does not become relevant
@@ -1459,7 +1478,7 @@ namespace smt::noodler {
             add_axiom({offset_ge_0, i_eq_m1});
 
             // update length variables
-            util::get_str_variables(t, this->m_util_s, m, this->len_vars);
+            mark_expression_as_length(t);
             this->len_vars.insert(x);
         }
     }
@@ -1726,8 +1745,8 @@ namespace smt::noodler {
         add_axiom({lit_e, len_y_gt_len_x, eq_mx_my});
 
         // update length variables
-        util::get_str_variables(x, this->m_util_s, m, this->len_vars, &this->predicate_replace);
-        util::get_str_variables(y, this->m_util_s, m, this->len_vars, &this->predicate_replace);
+        mark_expression_as_length(x);
+        mark_expression_as_length(y);
         this->var_eqs.add(expr_ref(m_util_a.mk_int(1), m), expr_ref(my, m));
         this->var_eqs.add(expr_ref(m_util_a.mk_int(1), m), expr_ref(mx, m));
     }
@@ -1834,8 +1853,8 @@ namespace smt::noodler {
         add_axiom({lit_e, len_y_gt_len_x, eq_mx_my});
 
         // update length variables
-        util::get_str_variables(x, this->m_util_s, m, this->len_vars, &this->predicate_replace);
-        util::get_str_variables(y, this->m_util_s, m, this->len_vars, &this->predicate_replace);
+        mark_expression_as_length(x);
+        mark_expression_as_length(y);
         // my and mx are in the same length-equivalence class: 1
         this->var_eqs.add(expr_ref(m_util_a.mk_int(1), m), my);
         this->var_eqs.add(expr_ref(m_util_a.mk_int(1), m), mx);
@@ -2038,9 +2057,6 @@ namespace smt::noodler {
         ast_manager& m = get_manager();
         STRACE(str, tout  << "handle_in_re " << mk_pp(e, m) << " " << is_true << std::endl;);
 
-        // STRACE("mocha-kmp", tout  << "handle_in_re " << mk_pp(e, m) << " " << is_true << std::endl;);
-        
-        // STRACE("mocha-kmp", tout  <<ctx.get_assignment(e)<< std::endl;);
         app_ref re_constr(to_app(s), m);
         expr_ref re_atom(e, m);
         /// Check if @p re_constr is a simple variable. If not (it is, e.g., concatenation of string terms),
@@ -2119,6 +2135,16 @@ namespace smt::noodler {
         }
     }
 
+    // void theory_str_noodler::trim_eq()(const expr_ref& left_side,const expr_ref& right_side){
+    //     if(!m_util_s.str.is_concat(left_side.get())|| !m_util_s.str.is_concat(right_side.get()))
+    //             return;
+    //     expr_ref_vector l_vec(m),r_vec(m);
+    //     m_util_s.str.get_concat(left_side.get(),l_vec);
+    //     m_util_s.str.get_concat(right_side.get(),r_vec);
+    //     size_t num_l = l_vec.size(),num_r =r_vec.size();
+    //     return;
+    // }
+
     // *x = *xs or x* = sx* where x is varible and s is string.
     // |x| = n, |s| = m
     /*  
@@ -2129,14 +2155,34 @@ namespace smt::noodler {
     If m|n, x=(s)^+
     Else x = (s)^*+prefix(s)
     */
-    void theory_str_noodler::add_kmp(const expr_ref& left_side,const expr_ref& right_side){
-        
+    void theory_str_noodler::add_kmp(const expr_ref& left_side,const expr_ref& right_side, const bool have_membership){
         if(!m_util_s.str.is_concat(left_side.get())|| !m_util_s.str.is_concat(right_side.get()))
             return;
+        expr_ref_vector l_ini_vec(m),r_ini_vec(m);
         expr_ref_vector l_vec(m),r_vec(m);
-        m_util_s.str.get_concat(left_side.get(),l_vec);
-        m_util_s.str.get_concat(right_side.get(),r_vec);
-        size_t num_l = l_vec.size(),num_r =r_vec.size();
+        m_util_s.str.get_concat(left_side.get(),l_ini_vec);
+        m_util_s.str.get_concat(right_side.get(),r_ini_vec);
+        size_t num_l = l_ini_vec.size(),num_r =r_ini_vec.size();
+        if(num_l<1||num_r<1)return;
+        // remote the same prefix and suffix
+        size_t st_l = 0,st_r=0;
+        size_t ed_l = num_l,ed_r = num_r;
+        for(size_t i = 0; i < std::min(num_l, num_r); i++) {
+            st_l = i;
+            st_r = i;
+            if(l_ini_vec.get(i) == r_ini_vec.get(i)) continue;
+            break;
+        }
+        for(size_t i = 1; i <= std::min(num_l, num_r); i++) {
+            ed_l = num_l - i+1;
+            ed_r = num_r - i+1;
+            if(l_ini_vec.get(num_l-i) == r_ini_vec.get(num_r-i)) continue;
+            break;
+        }
+        for(size_t i = st_l; i < ed_l; i++) l_vec.push_back(l_ini_vec.get(i));
+        for(size_t i = st_r; i < ed_r; i++) r_vec.push_back(r_ini_vec.get(i));
+        num_l = l_vec.size();num_r =r_vec.size();
+        if(num_l<1||num_r<1)return;
         if(util::is_str_variable(r_vec.get(0),m_util_s) &&m_util_s.str.is_string(l_vec.get(0))){
             std::swap(r_vec,l_vec);
             std::swap(num_l,num_r);  
@@ -2150,21 +2196,27 @@ namespace smt::noodler {
                 exs.push_back(expr_ref(m_util_s.re.mk_in_re(ex_var,rex_star),m));
 
                 zstring s = to_app(ex_str)->get_decl()->get_parameter(0).get_zstring();
+                std::string s2 = s.encode();
+                std::unordered_set<std::string> seen;
+                for(char c:s2)seen.insert(std::string(1,c));
+                if(alphabet_of_var.find(to_app(ex_var)->get_name().str())==alphabet_of_var.end()){
+                    alphabet_of_var[to_app(ex_var)->get_name().str()]=seen;
+                }else{
+                    auto& old = alphabet_of_var[to_app(ex_var)->get_name().str()];
+                    for(std::string cs:old)for(char c:cs)seen.insert(std::string(1,c));
+                    alphabet_of_var[to_app(ex_var)->get_name().str()]=seen;
+                }
                 size_t len = s.length();
                 auto tmp_eq = rex_star;
                 for(size_t i= 1;i<len;i++){
                     tmp_eq = m_util_s.re.mk_union(tmp_eq,m_util_s.re.mk_concat(m_util_s.re.mk_to_re(m_util_s.str.mk_string(s.extract(0,i))),rex_star));
                 }
                 tmp_eq =  m_util_s.re.mk_in_re(ex_var,tmp_eq);
-                // STRACE("mocha-kmp",tout<<mk_pp(tmp_eq,m)<<"!\n";);
-                add_axiom({mk_literal(expr_ref(tmp_eq,m))});
-                // handle_in_re(tmp_eq,true);
-            //     ctx.internalize(m_util_s.re.mk_in_re(ex_var,tmp_eq),false);
-            //     // this->m_membership_todo_rel.push_back(std::make_tuple(expr_ref(ex_var,m),expr_ref(tmp_eq,m),true));
-        
+                if(have_membership){
+                    add_axiom({mk_literal(expr_ref(tmp_eq,m))});
+                }
             }
         }
-        
         if(m_util_s.str.is_string(l_vec.get(num_l-1))){
             std::swap(r_vec,l_vec);
             std::swap(num_l,num_r);  
@@ -2177,22 +2229,27 @@ namespace smt::noodler {
             auto rex_star = m_util_s.re.mk_star(m_util_s.re.mk_to_re(ex_str));
             expr_ref_vector exs(m);
             exs.push_back(expr_ref(m_util_s.re.mk_in_re(ex_var,rex_star),m));
-
             zstring s = to_app(ex_str)->get_decl()->get_parameter(0).get_zstring();
+            std::string s2 = s.encode();
+            std::unordered_set<std::string> seen;
+            for(char c:s2)seen.insert(std::string(1,c));
+            if(alphabet_of_var.find(to_app(ex_var)->get_name().str())==alphabet_of_var.end()){
+                alphabet_of_var[to_app(ex_var)->get_name().str()]=seen;
+            }else{
+                auto& old = alphabet_of_var[to_app(ex_var)->get_name().str()];
+                for(std::string cs:old)for(char c:cs)seen.insert(std::string(1,c));
+                alphabet_of_var[to_app(ex_var)->get_name().str()]=seen;
+            }
             size_t len = s.length();
             auto tmp_eq = rex_star;
             for(size_t i= 1;i<len;i++){
                 tmp_eq = m_util_s.re.mk_union(tmp_eq,m_util_s.re.mk_concat(m_util_s.re.mk_to_re(m_util_s.str.mk_string(s.extract(len-i,i))),rex_star));
             }
             tmp_eq =  m_util_s.re.mk_in_re(ex_var,tmp_eq);
-            // STRACE("mocha-kmp",tout<<mk_pp(tmp_eq,m)<<"!\n";);
-            add_axiom({mk_literal(expr_ref(tmp_eq,m))});
-            // auto final_ex = m_util_s.re.mk_in_re(ex_var,tmp_eq);
-            // internalize_atom(final_ex,true);
-            // handle_in_re(tmp_eq,true);
-            // STRACE("mocha-kmp",tout<<ctx.get_assignment(final_ex)<<"!\n";);
-            // // this->m_membership_todo_rel.push_back(std::make_tuple(expr_ref(ex_var,m),expr_ref(tmp_eq,m),true));
-        }
+            if(have_membership){
+                add_axiom({mk_literal(expr_ref(tmp_eq,m))});
+            }
+            }
     }
     
     // abc = def, ab = hg -> hgc = def
@@ -2238,7 +2295,6 @@ namespace smt::noodler {
             tot_.push_back(std::make_pair(expr_ref(m_util_s.str.mk_concat(tmp_vec,nullptr),m)
                 ,expr_ref(m_util_s.str.mk_concat(r_t,nullptr),m)));
         }
-        // STRACE("mocha-eqe",tout<<ll.first<<" "<<ll.second<<" "<<tot_.size()<<"\n";);
         return tot_;
     }
     void theory_str_noodler::eq_extend(const expr_ref& left_side,const expr_ref& right_side){
@@ -2248,7 +2304,6 @@ namespace smt::noodler {
         m_util_s.str.get_concat(left_side.get(),l_vec);
         m_util_s.str.get_concat(right_side.get(),r_vec);
         std::vector<std::pair<expr_ref,expr_ref>> tot_;
-        // STRACE("mocha-eqe-debug",tout<<mk_pp(left_side.get(),m)<<" -- "<<mk_pp(right_side.get(),m)<<"\n";);
         
         for(const auto& ex: m_word_eq_todo){
             auto left_text = ex.first,right_text = ex.second;
@@ -2283,20 +2338,13 @@ namespace smt::noodler {
             for(auto i:tmp)tot_.push_back(i);
             if(ll.first||ll.second||lr.first||lr.second||
             rr.first||rr.second||rl.first||rl.second){
-                // STRACE("mocha-eqe-debug",tout<<mk_pp(left_side.get(),m)<<" ~~ "<<mk_pp(right_side.get(),m)<<"\n";);
-        
-                // STRACE("mocha-eqe-debug",tout<<lr.first<<"\n";);
-                // STRACE("mocha-eqe-debug",tout<<mk_pp(left_text.get(),m)<<" ~~ "<<mk_pp(right_text.get(),m)<<"\n";);
-        
+                
             }
         }
-        // STRACE("mocha-eqe",tout<<tot_.size()<<"-------\n";);
         for(const auto& ep:tot_){
             expr_ref tmp_eq (m.mk_eq(ep.first.get(),ep.second.get()),m);
-            // STRACE("mocha-eqe-debug",tout<<mk_pp(tmp_eq.get(),m)<<"\n";);
-            m_rewrite(tmp_eq);
-            // STRACE("mocha-eqe-debug",tout<<mk_pp(tmp_eq.get(),m)<<"\n";);
-            if(m.is_false(tmp_eq.get())){
+             m_rewrite(tmp_eq);
+             if(m.is_false(tmp_eq.get())){
                 expr_ref unsat_core(m.mk_true(), m);
                 unsat_core = m.mk_not(unsat_core);
                 ctx.internalize(unsat_core.get(), true);
@@ -2305,13 +2353,11 @@ namespace smt::noodler {
             }
             if(m.is_true(tmp_eq.get())) continue;
             size_t num_a = to_app(tmp_eq)->get_num_args();
-            // STRACE("mocha-eqe-debug",tout<<num_a<<"\n";);
-            SASSERT(num_a==2);
+             SASSERT(num_a==2);
             auto l_res = to_app(tmp_eq)->get_arg(0);
             auto r_res = to_app(tmp_eq)->get_arg(1);
             check_lyndon(expr_ref(l_res,m), expr_ref(r_res,m));
             m_word_eq_todo.push_back({expr_ref(l_res,m), expr_ref(r_res,m)});
-            // STRACE("mocha-eqe-debug",tout<<mk_pp(l_res,m)<<" == "<<mk_pp(r_res,m)<<"\n";);
             ctx.mark_as_relevant(m.mk_eq(l_res,r_res));
             add_axiom({mk_literal(m.mk_eq(l_res,r_res))});
             // ctx.internalize(m.mk_eq(l_res,r_res),true);
@@ -2343,9 +2389,6 @@ namespace smt::noodler {
                 expr_ref_vector a_vec(m),b_vec(m);
                 for(size_t posj =0;posj<pos;posj++)a_vec.push_back(expr_ref(l_text[posj].get(),m));
                 for(size_t posj =pos;posj<size_l;posj++)b_vec.push_back(expr_ref(l_text[posj].get(),m));
-                // STRACE("mocha-lyndon",tout<<mk_pp(m.mk_eq(left_side.get(),right_side.get()),m)<<"\n";);
-                // STRACE("mocha-lyndon",tout<<mk_pp(m_util_s.str.mk_concat(a_vec,nullptr),m)<<"\n";);
-                // STRACE("mocha-lyndon",tout<<mk_pp(m_util_s.str.mk_concat(b_vec,nullptr),m)<<"\n";);
                 unsigned ha= a_vec.hash(),hb= b_vec.hash();
                 if(ha>hb){
                     std::swap(ha,hb);
@@ -2419,7 +2462,10 @@ namespace smt::noodler {
         expr_ref_vector len_arg(m);
         if(expr_cases::is_len_num_eq(ex, m, m_util_s, m_util_a, len_arg, val) && val < MAX_NUM) {
             if (val < 0) {
-                add_axiom({~mk_literal(ex)});
+                // The sum of lengths should be equal negative number, which is not possible.
+                // We cannot use the following line (that says this equation cannot hold), as it becomes inconsistent for Z3 (see https://github.com/VeriFIT/z3-noodler/issues/242),
+                // instead it will be handled by the axioms saying that lengths need to be nonnegative.
+                // add_axiom({~mk_literal(ex)});
                 return true;
             } else if (val == 0) {
                 // we know that concatenation of vars in len_arg must be empty string,
@@ -2438,7 +2484,10 @@ namespace smt::noodler {
         } else if(expr_cases::is_len_num_leq_or_geq(ex, m, m_util_s, m_util_a, len_arg, val, val_is_larger) && val < MAX_NUM) {
             if (val < 0) {
                 if (val_is_larger) {
-                    add_axiom({~mk_literal(ex)});
+                    // The sum of lengths should be less than or equal than negative number, which is not possible.
+                    // We cannot use the following line (that says this inequation cannot hold), as it becomes inconsistent for Z3 (see https://github.com/VeriFIT/z3-noodler/issues/242),
+                    // instead it will be handled by the axioms saying that lengths need to be nonnegative.
+                    // add_axiom({~mk_literal(ex)});
                 }
                 // if val is smaller than len_arg, then this expression just say that the length of len_arg is larger than minus number -> it is useless
                 return true;
@@ -2663,5 +2712,39 @@ namespace smt::noodler {
         }
 
         return expr_ref(refinement, m);
+    }
+
+    void theory_str_noodler::mark_expression_as_length(expr *e) {
+        if(m_util_s.str.is_string(e)) {
+            return;
+        }
+
+        if(util::is_str_variable(e, m_util_s)) {
+            len_vars.insert(e);
+            return;
+        }
+
+        SASSERT(is_app(e));
+        app* ex_app{ to_app(e) };
+        if (m_util_s.str.is_concat(e)) {
+            for(unsigned i = 0; i < ex_app->get_num_args(); i++) {
+                mark_expression_as_length(ex_app->get_arg(i));
+            }
+        } else {
+            expr* rpl;
+            if (predicate_replace.find(ex_app, rpl)) {
+                mark_expression_as_length(rpl);
+            } else {
+                initial_len_expressions.insert(e);
+            }
+        }
+    }
+    
+    void theory_str_noodler::print_len_vars(std::ostream& os) {
+        os << "Current length vars:";
+        for (expr* e : len_vars) {
+            os << " " << mk_pp(e,m);
+        }
+        os << std::endl;
     }
 }

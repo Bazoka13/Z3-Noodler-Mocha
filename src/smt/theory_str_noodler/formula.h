@@ -805,6 +805,7 @@ namespace smt::noodler {
     private:
         std::vector<Predicate> predicates;
     public:
+        std::map<BasicTerm,std::pair<size_t,size_t> > var_length_manager; 
         std::vector<Predicate>& get_predicates() { return predicates; }
         const std::vector<Predicate>& get_predicates() const { return predicates; }
 

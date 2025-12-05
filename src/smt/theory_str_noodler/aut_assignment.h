@@ -10,7 +10,7 @@
 #include <memory>
 
 #include <mata/nfa/nfa.hh>
-#include <mata/nfa/strings.hh>
+#include <mata/applications/strings.hh>
 #include <mata/nfa/builder.hh>
 
 #include "formula.h"
@@ -172,7 +172,7 @@ namespace smt::noodler {
          * @brief Checks if the automaton for @p t is equal to language containing only empty word.
          */
         bool is_epsilon(const BasicTerm &t) const {
-            return mata::strings::is_lang_eps(*(this->at(t)));
+            return mata::applications::strings::is_lang_eps(*(this->at(t)));
         }
 
         /**
@@ -287,7 +287,7 @@ namespace smt::noodler {
          * @return True->fixed length
          */
         bool fixed_length(const BasicTerm& t, int& n) const {
-            auto lengths = mata::strings::get_word_lengths(*this->at(t));
+            auto lengths = mata::applications::strings::get_word_lengths(*this->at(t));
             if(lengths.size() != 1) {
                 return false;
             }

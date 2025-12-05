@@ -172,13 +172,21 @@ namespace smt::noodler::regex {
                     arg_nfas.push_back(std::move(results_stack.top()));
                     results_stack.pop();
                 }
-
+                STRACE(str_create_nfa,
+                    tout << "--------------" << "Creating NFA for: " << cur_expr->hash() << "\n";
+                );
                 STRACE(str_create_nfa,
                     tout << "--------------" << "Creating NFA for: " << mk_pp(const_cast<app*>(cur_expr), const_cast<ast_manager&>(m)) << "\n";
                 );
 
                 // create the resulting NFA for cur_expr
                 Nfa result{};
+                // if(memorized_nfa.find(cur_expr->hash()) != memorized_nfa.end()) {
+                //     result = memorized_nfa[cur_expr->hash()];
+                //     STRACE(str_create_nfa,
+                //     tout << mk_pp(const_cast<app*>(cur_expr), const_cast<ast_manager&>(m)) <<"-?\n";
+                //     );
+                // } else {
                 if (m_util_s.re.is_to_re(cur_expr)) { // Handle conversion of to regex function call.
                     SASSERT(cur_expr->get_num_args() == 1);
                     // Assume that expression inside re.to_re() function is a string of characters.
@@ -383,7 +391,7 @@ namespace smt::noodler::regex {
                 } else {
                     util::throw_error("unsupported operation in regex");
                 }
-
+                
                 // intermediate automata reduction
                 // if the automaton is too big --> skip it. The computation of the simulation would be too expensive.
                 if(result.num_of_states() < RED_BOUND) {
@@ -397,7 +405,10 @@ namespace smt::noodler::regex {
                 STRACE(str_create_nfa,
                     tout << "--------------" << "NFA for: " << mk_pp(const_cast<app*>(cur_expr), const_cast<ast_manager&>(m)) << "---------------" << std::endl;
                     tout << result;
+                    tout << result.num_of_states()<<"\n";
                 );
+                // memorized_nfa[cur_expr->hash()] = result;
+                // }
 
                 results_stack.push(std::move(result));
             }
@@ -424,7 +435,9 @@ namespace smt::noodler::regex {
                 });
         }
 
-        STRACE(str_create_nfa, tout << final_result;);
+        // final_result = mata::nfa::minimize(final_result);
+        // STRACE(str_create_nfa, tout << final_result;);
+        STRACE(str_create_nfa, tout << final_result.num_of_states()<<"\n";);
         return final_result;
     }
 
@@ -1083,8 +1096,8 @@ namespace smt::noodler::regex {
                     zstring& replace = backward_iterator->second;
                     SASSERT(backward_iterator != backward_iterator_end);
                     mata::nft::Nft result = std::holds_alternative<zstring>(find) ?
-                                                mata::nft::strings::replace_reluctant_literal(util::get_mata_word_zstring(std::get<zstring>(find)), util::get_mata_word_zstring(replace), mata_alph)
-                                              : mata::nft::strings::replace_reluctant_regex(std::get<mata::nfa::Nfa>(find), util::get_mata_word_zstring(replace), mata_alph);
+                                                mata::applications::strings::replace::replace_reluctant_literal(util::get_mata_word_zstring(std::get<zstring>(find)), util::get_mata_word_zstring(replace), mata_alph)
+                                              : mata::applications::strings::replace::replace_reluctant_regex(mata::nfa::determinize(std::get<mata::nfa::Nfa>(find)), util::get_mata_word_zstring(replace), mata_alph);
                     ++backward_iterator;
                     return mata::nft::reduce(mata::nft::remove_epsilon(result).trim()).trim();
                 }

@@ -28,7 +28,6 @@ Notes:
 #include "util/sign.h"
 #include "math/automata/automaton.h"
 #include "math/automata/symbolic_automata.h"
-// #include "util/mocha_string.h"
 
 
 inline std::ostream& operator<<(std::ostream& out, expr_ref_pair_vector const& es) {
@@ -294,6 +293,8 @@ class seq_rewriter {
 
     br_status reduce_re_eq(expr* a, expr* b, expr_ref& result);
     br_status reduce_re_is_empty(expr* r, expr_ref& result);
+    bool is_wildcard(expr* ep);
+    bool wildcard_matched(expr* r1,expr* r2);
 
     bool non_overlap(expr_ref_vector const& p1, expr_ref_vector const& p2) const;
     bool non_overlap(zstring const& p1, zstring const& p2) const;

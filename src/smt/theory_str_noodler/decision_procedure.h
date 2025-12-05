@@ -210,14 +210,14 @@ namespace smt::noodler {
         }
 
         /**
-         * @brief Adds all transducers that are not simple (that do not have one input and one output var) back to processing.
+         * @brief Adds all transducers that contain length vars on input and are not simple (they do not have one input and one output var) back to processing.
          * 
          * It pushes a transducer only if it is not pushed already.
          * Useful after calling substitute_vars().
          */
         void push_non_simple_transducers_to_processing() {
             for (const Predicate &transducer : transducers) {
-                if (transducer.get_input().size() != 1 || transducer.get_output().size() != 1 || transducer.get_input()[0].is_literal() || transducer.get_input()[1].is_literal()) {
+                if (contains_length_var(transducer.get_input()) && (transducer.get_input().size() != 1 || transducer.get_output().size() != 1 || transducer.get_input()[0].is_literal() || transducer.get_input()[1].is_literal())) {
                     push_unique(transducer, false);
                 }
             }
@@ -341,6 +341,9 @@ namespace smt::noodler {
          */
         void substitute_vars(const std::set<BasicTerm>& vars_to_substitute);
 
+        /// @brief Remove vars @p vars_to_remove (except those in @p vars_to_keep ) from the subtitution_map/aut_ass
+        void remove_vars(const std::set<BasicTerm>& vars_to_remove, const std::set<BasicTerm>& vars_to_keep);
+
         /**
          * @brief Get the length constraints for variable @p var
          * 
@@ -409,7 +412,7 @@ namespace smt::noodler {
          * @brief Processes inclusions from noodlification that are of the form where the right side var should be substituted by left side.
          * 
          * It assumes that left sides contain fresh variables, right sides are not substituted yet and all inclusions hold.
-         * This function then takes each inclusions t_1 t_2 ... t_n ⊆ x where x is length var  and substitutes substitution_map[x] = t_1 t_2 ... t_n.
+         * This function then takes each inclusions t_1 t_2 ... t_n ⊆ x where x is length var and substitutes substitution_map[x] = t_1 t_2 ... t_n.
          * It is possible that x is on the right side of two inclusions, the first one substitutes it and the second one is added into this SolvingState
          * and also it is added for processing.
          * There can be inclusions t_1 t_2 ... t_n ⊆ x y ... z where there are multiple variables on the right side, but all the variables on the right
@@ -419,8 +422,9 @@ namespace smt::noodler {
          * 
          * @param inclusions Inclusion to process
          * @param on_cycle Whether the inclusions should be on cycle or not
+         * @return std::set<BasicTerm> The set of variables that were substituted
          */
-        void process_substituting_inclusions_from_right(const std::vector<Predicate>& inclusions, bool on_cycle);
+        std::set<BasicTerm> process_substituting_inclusions_from_right(const std::vector<Predicate>& inclusions, bool on_cycle);
 
         /**
          * @brief Similar to process_substituting_inclusions_from_right but opposite (left var should be substituted by right side).
@@ -438,8 +442,9 @@ namespace smt::noodler {
          * 
          * @param inclusions Inclusions to process
          * @param on_cycle Whether the inclusions should be on cycle or not
+         * @return std::set<BasicTerm> The set of variables that were substituted
          */
-        void process_substituting_inclusions_from_left(const std::vector<Predicate>& inclusions, bool on_cycle);
+        std::set<BasicTerm> process_substituting_inclusions_from_left(const std::vector<Predicate>& inclusions, bool on_cycle);
 
 
         /**
@@ -477,6 +482,8 @@ namespace smt::noodler {
 
         // a deque containing states of decision procedure, each of them can lead to a solution
         std::deque<SolvingState> worklist;
+        // if a solving state has nothing to process, it can lead to solution, we keep these solving states here instead of worklist so we can process them immediately
+        std::vector<SolvingState> possible_solutions;
 
         /// State of a found satisfiable solution set when one is computed using
         ///  compute_next_solution() or after preprocess()
@@ -489,6 +496,7 @@ namespace smt::noodler {
         std::unordered_map<BasicTerm, std::vector<BasicTerm>> init_substitution_map;
         // contains to/from_code/int conversions
         std::vector<TermConversion> conversions;
+        ast_manager& m;
 
         // length vars that occur as input/output of some transducer formula
         std::set<BasicTerm> length_vars_with_transducers;
@@ -511,6 +519,12 @@ namespace smt::noodler {
 
         const theory_str_noodler_params& m_params;
 
+        /// @brief We save here all string variables that exist before the decision procedure is run (useful for removing variables created in decision procedure, @sa SolvingState::remove_vars())
+        std::set<BasicTerm> initial_variables;
+
+        /// @brief Sets the initial_variables by adding all variables from @p f and other stuff (init_aut_ass, init_length_sensitive_vars, conversions, inclusions_from_preprocessing)
+        void set_initial_variables(const Formula& f);
+
         /**
          * @brief Replace disequality L != R with equalities and a length constraint saved in disequations_len_formula_conjuncts.
          * 
@@ -522,21 +536,35 @@ namespace smt::noodler {
         void process_inclusion(const Predicate& inclusion_to_process, SolvingState& solving_state);
         void process_transducer(const Predicate& transducer_to_process, SolvingState& solving_state);
 
+        bool is_worklist_empty() {
+            return (worklist.empty() && possible_solutions.empty());
+        }
+
         void push_to_worklist(SolvingState solving_state, bool to_back) {
             std::string old_DOT_name = solving_state.DOT_name;
             solving_state.set_new_DOT_name();
             STRACE(str_noodle_dot, tout << solving_state.print_to_DOT() << std::endl << old_DOT_name << " -> " << solving_state.DOT_name << ";\n");
-            if (to_back) {
-                worklist.push_back(std::move(solving_state));
+            if (solving_state.predicates_to_process.empty()) {
+                possible_solutions.push_back(std::move(solving_state));
             } else {
-                worklist.push_front(std::move(solving_state));
+                if (to_back) {
+                    worklist.push_back(std::move(solving_state));
+                } else {
+                    worklist.push_front(std::move(solving_state));
+                }
             }
         }
 
         unsigned num_of_popped_elements = 0;
         SolvingState pop_from_worklist() {
-            SolvingState element_to_process = std::move(worklist.front());
-            worklist.pop_front();
+            SolvingState element_to_process;
+            if (!possible_solutions.empty()) {
+                element_to_process = std::move(possible_solutions.back());
+                possible_solutions.pop_back();
+            } else {
+                element_to_process = std::move(worklist.front());
+                worklist.pop_front();
+            }
             STRACE(str_noodle_dot, tout << element_to_process.DOT_name << " -> " << element_to_process.DOT_name << " [penwidth=0,dir=none,label=" << num_of_popped_elements << "];\n";);
             ++num_of_popped_elements;
             return element_to_process;
@@ -662,7 +690,73 @@ namespace smt::noodler {
         // inclusions that resulted from preprocessing, we use them to generate model (we can pretend that they were all already refined)
         std::vector<Predicate> inclusions_from_preprocessing;
 
-        std::vector<std::pair<mata::nft::Nft,std::vector<BasicTerm>>> transducers_with_vars_on_tapes;
+        /// Keeps transducer with parikh information needed to compute model
+        struct TransducerParikhInformation {
+            mata::nft::Nft nft; // the transducer
+            std::vector<BasicTerm> vars_on_tapes; // each tape of the transducer represent some length variable
+            std::map<mata::nft::State, BasicTerm> state_to_gamma_init; // states of the transducer are mapped to parikh variable representing that the solution starts in the given state
+            std::map<mata::nft::Transition, BasicTerm> transition_to_var; // transitions of the transducer are mapped to parikh variables representing how often we need to pass it (vars can be shared)
+
+            /// Get all parikh vars connected with the transducer
+            std::set<BasicTerm> get_all_parikh_vars() const {
+                std::set<BasicTerm> parikh_vars;
+                for (const auto& [_state, var] : state_to_gamma_init) {
+                    parikh_vars.insert(var);
+                }
+                for (const auto& [_trans, var] : transition_to_var) {
+                    parikh_vars.insert(var);
+                }
+                return parikh_vars;
+            }
+
+            /// Given an @p arith_model (maps gamma_init vars to numbers), we get all states that be an initial state (their gamma_init var is equal to 1)
+            std::set<mata::nft::State> get_potentional_initial_states(const std::map<BasicTerm,rational>& arith_model) const {
+                std::set<mata::nft::State> potentional_initial_states;
+                for (const auto& [state, var] : state_to_gamma_init) {
+                    if (arith_model.at(var) == 1) {
+                        potentional_initial_states.insert(state);
+                    }
+                }
+                return potentional_initial_states;
+            }
+
+            /// Given an @p arith_model (maps transition vars to numbers), we return a mapping that maps transitions to a (possibly shared) number representing how many times a transition need to be taken
+            std::map<mata::nft::Transition,std::shared_ptr<unsigned>> get_transition_to_value(const std::map<BasicTerm,rational>& arith_model) const {
+                std::map<BasicTerm, std::shared_ptr<unsigned>> var_to_value;
+                std::map<mata::nft::Transition,std::shared_ptr<unsigned>> result;
+                for (const auto& [trans, var] : transition_to_var) {
+                    if (!var_to_value.contains(var)) {
+                        var_to_value[var] = std::make_shared<unsigned>(arith_model.at(var).get_unsigned());
+                    }
+                    result[trans] = var_to_value.at(var);
+                }
+                return result;
+            }
+
+            /// Replaces transitions with dummy symbol in @c nft and @c transition_to_var by new transitions with the symbols from @p set_of_symbols_to_replace_dummy_symbol_with and maps them to the same var
+            void replace_dummy_symbol(const std::set<mata::Symbol>& set_of_symbols_to_replace_dummy_symbol_with) {
+                if (set_of_symbols_to_replace_dummy_symbol_with.size() > 1) {
+                    // TODO fix this? if we had more dummy symbols, for code-points vars, we can only have transitions with the correct code-point value
+                    util::throw_error("We cannot replace dummy symbol by more than one symbol in transducers yet");
+                }
+                util::replace_dummy_symbol_in_transducer_with(nft, set_of_symbols_to_replace_dummy_symbol_with);
+                std::vector<std::pair<mata::nft::Transition, BasicTerm>> new_elements;
+                for (auto it = transition_to_var.begin(); it != transition_to_var.end();) {
+                    if (it->first.symbol == util::get_dummy_symbol()) {
+                        for (mata::Symbol s : set_of_symbols_to_replace_dummy_symbol_with) {
+                            new_elements.emplace_back(mata::nft::Transition{it->first.source, s, it->first.target}, it->second);
+                        }
+                        it = transition_to_var.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                transition_to_var.insert(new_elements.begin(), new_elements.end());
+            }
+        };
+
+        /// Transducers that combine multiple length variables
+        std::vector<TransducerParikhInformation> transducers_with_parikh_information;
         
         bool is_model_initialized = false;
         /**
@@ -713,13 +807,14 @@ namespace smt::noodler {
              Formula formula, AutAssignment init_aut_ass,
              std::unordered_set<BasicTerm> init_length_sensitive_vars,
              const theory_str_noodler_params &par,
-             std::vector<TermConversion> conversions
+             std::vector<TermConversion> conversions,
+             ast_manager& m
         ) : init_length_sensitive_vars(init_length_sensitive_vars),
             formula(formula),
             init_aut_ass(init_aut_ass),
             conversions(conversions),
+            m(m),
             m_params(par) {
-            
         }
         
         /**

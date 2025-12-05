@@ -7,6 +7,8 @@ struct theory_str_noodler_params {
    
     bool m_underapproximation = false;
     bool m_preprocess_red = false;
+    bool m_preprocess_nft = true;
+    bool m_homomorphism_heuristic = true;
     bool m_loop_protect = false;
     bool m_try_nielsen = false;
     bool m_try_length_proc = false;

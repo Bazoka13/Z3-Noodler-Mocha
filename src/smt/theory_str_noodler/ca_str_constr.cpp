@@ -4,7 +4,7 @@
 #include "util.h"
 #include <mata/nfa/delta.hh>
 #include <mata/nfa/nfa.hh>
-#include <mata/nfa/strings.hh>
+#include <mata/applications/strings.hh>
 #include <unordered_map>
 #include <mata/parser/re2parser.hh>
 
@@ -724,7 +724,7 @@ namespace smt::noodler::ca {
             for (const BasicTerm& used_var : used_variables) {
                 std::shared_ptr<mata::nfa::Nfa> var_automaton = aut_assignment.at(used_var);
 
-                std::set<std::pair<int, int>> lengths_of_words_in_var_lang = mata::strings::get_word_lengths(*var_automaton);
+                std::set<std::pair<int, int>> lengths_of_words_in_var_lang = mata::applications::strings::get_word_lengths(*var_automaton);
                 LenNode formula_describing_word_lengths = convert_loop_representation_of_var_word_lengths_into_formula(lengths_of_words_in_var_lang, used_var);
                 variable_lengths_are_correct.succ.push_back(formula_describing_word_lengths);
             }

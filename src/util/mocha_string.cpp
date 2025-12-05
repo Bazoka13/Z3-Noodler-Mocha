@@ -68,14 +68,12 @@ int sunday_search(zstring const& text, zstring const& pattern,unsigned offset) {
 }
 
 bool subOf(zstring const& s, zstring const& t){
-    // TRACE("mocha-contains",tout<<"subOf begins\n";);
     int pos = bmhbnfs_search(s,t);
     return pos>=0;
 }
 
 int idxOf(zstring const& s, zstring const& t,unsigned offset){
     int pos = sunday_search(s,t,offset);
-    // TRACE("mocha-contains",tout<<pos<<"--\n";);
     return pos;
 }
 
@@ -157,7 +155,6 @@ bool MatchHard(std::string_view t, std::string_view s,int &LF) {
 
 
 bool mmatch(std::string &s,std::string &t) {
-    // TRACE("mocha-wild",tout<<"here\n";);
     int LF=0;
     std::string_view s1(s.c_str()), s2(t.c_str());
     if(!SkipBegin(s1, s2))return false;  

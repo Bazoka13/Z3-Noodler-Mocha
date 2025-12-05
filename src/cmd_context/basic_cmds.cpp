@@ -471,6 +471,7 @@ class set_option_cmd : public set_get_option_cmd {
             ctx.set_produce_unsat_assumptions(to_bool(value));
         }
         else if (m_option == m_produce_models) {
+            gparams::set("model", "true"); // NOODLER hack so that models work with (set-option :produce-models true), I do not know how to make it Z3-way
             ctx.set_produce_models(to_bool(value));
         }
         else if (m_option == m_produce_assignments) {

@@ -7,6 +7,8 @@ void theory_str_noodler_params::updt_params(params_ref const & _p) {
     smt_params_helper p(_p);
     m_underapproximation = p.str_underapprox();
     m_preprocess_red = p.str_preprocess_red();
+    m_preprocess_nft = p.str_preprocess_nft();
+    m_homomorphism_heuristic = p.str_homomorphism_heuristic();
     m_loop_protect = p.str_loop_protect();
     m_try_nielsen = p.str_try_nielsen();
     m_try_length_proc = p.str_try_length_proc();
@@ -22,6 +24,8 @@ void theory_str_noodler_params::updt_params(params_ref const & _p) {
 void theory_str_noodler_params::display(std::ostream & out) const {
     DISPLAY_PARAM(m_underapproximation);
     DISPLAY_PARAM(m_preprocess_red);
+    DISPLAY_PARAM(m_preprocess_nft);
+    DISPLAY_PARAM(m_homomorphism_heuristic);
     DISPLAY_PARAM(m_loop_protect);
     DISPLAY_PARAM(m_try_nielsen);
     DISPLAY_PARAM(m_try_length_proc);

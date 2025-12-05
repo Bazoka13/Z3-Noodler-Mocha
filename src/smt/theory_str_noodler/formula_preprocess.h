@@ -398,6 +398,7 @@ namespace smt::noodler {
         void reduce_regular_sequence(unsigned mn);
         void separate_eqs();
         void remove_extension();
+        void calc_alphabet_and_split(const std::map<std::string, std::unordered_set<std::string>>& alphabet_of_var);
         void remove_trivial();
         void refine_prefix_and_suffix();
         bool refine_pre_image();
@@ -408,6 +409,7 @@ namespace smt::noodler {
         void common_prefix_propagation();
         void common_suffix_propagation();
         void conversions_validity(std::vector<TermConversion>& conversions);
+        bool has_unsat_transducers();
 
         void underapprox_var_language(const BasicTerm& var);
         void refine_languages();

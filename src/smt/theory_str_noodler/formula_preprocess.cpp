@@ -993,8 +993,9 @@ namespace smt::noodler {
      * @brief Refine (dis)equations with similar prefix and suffix.
      */
     bool checkLoop(const mata::nfa::Nfa& input_nfa){
+        if(input_nfa.is_acyclic())return false;
         size_t MAX_LEN = 100;
-        auto words = mata::strings::get_shortest_words(input_nfa);
+        auto words = mata::applications::strings::get_shortest_words(input_nfa);
         if(!words.empty() && !words.begin()->empty()){
                 for(const mata::Word & w :words){
                     if(w.empty())continue;
@@ -1018,8 +1019,7 @@ namespace smt::noodler {
                             nfa.delta.add(pre,s,ini);
                         }
                     }
-                    // STRACE("mocha-reduce",tout<<mata::nfa::is_included(input_nfa,nfa,nfa.alphabet));
-
+                    
                     nfa = mata::nfa::intersection(nfa,input_nfa);
                     if(!mata::nfa::are_equivalent(input_nfa,nfa)){
                         return false;
@@ -1053,13 +1053,7 @@ namespace smt::noodler {
                                 nfa.delta.add(pre,s,ini);
                             }
                         }
-                        // STRACE("mocha-reduce",tout<<nfa.print_to_dot()<<"\n");
-                        // STRACE("mocha-reduce",tout<<mata::nfa::is_included(input_nfa,nfa,nfa.alphabet));
-                        // exit(0);
                         nfa = mata::nfa::intersection(nfa,input_nfa);
-                        // STRACE("mocha-reduce",tout<<nfa.print_to_dot()<<"\n");
-                        // STRACE("mocha-reduce",tout<<input_nfa.print_to_dot()<<"\n");
-                        // exit(0);
                         if(!mata::nfa::are_equivalent(input_nfa,nfa)){
                             return false;
                         }
@@ -1077,7 +1071,6 @@ namespace smt::noodler {
         for(const auto& pd: this->formula.get_predicates()){
             if(pd.second.is_transducer()){
                 if(pd.second.get_output().size()==1&&pd.second.get_input().size()==1&&this->formula.single_occurr(pd.second.get_input_set())){
-                    STRACE(mocha_nfa,tout<<"enter pre image\n";);
                     mata::nft::Nft nt = (*pd.second.get_transducer());
                     mata::nfa::Nfa na = (*this->aut_ass[pd.second.get_input()[0]]); 
                     mata::nft::Nft backward_applied_nft = nt.apply(na, 0);
@@ -1087,7 +1080,6 @@ namespace smt::noodler {
                     nfa_pre_image=determinize(remove_epsilon(nfa_pre_image).trim());
                     if(mata::nfa::is_included((*this->aut_ass[pd.second.get_output()[0]]),nfa_pre_image)){
                         rem_ids.insert(pd.first);
-                        STRACE(mocha_nfa,tout<<pd.second.to_string()<<"\n";);
                     }
                 }  
             }
@@ -1099,10 +1091,10 @@ namespace smt::noodler {
     }
     
     void FormulaPreprocessor::refine_prefix_and_suffix() {
-        // STRACE(mocha-reduce, tout << "Preprocessing step - refine_prefix_and_suffix\n";);
         std::set<size_t> rem_ids;
         std::set<Predicate> new_preds;
         for(const auto& pr : this->formula.get_predicates()) {
+            STRACE(str,tout<<pr.second.to_string()<<"\n";);
             if(!pr.second.is_equation() and !pr.second.is_inequation())
                 continue;
             std::vector<BasicTerm> left_vars = pr.second.get_left_side();
@@ -1112,6 +1104,7 @@ namespace smt::noodler {
             size_t tot_num = std::min(num_left,num_right);
             size_t l_sum = 0,r_sum=0;
             for(size_t pos = 0;pos<tot_num;pos++){
+                STRACE(str,tout<<pos<<" "<<tot_num<<"\n";);
                 bool should_stop=false;
                 //todo:optimize max_len
                 size_t MAX_LEN = 10;
@@ -1183,6 +1176,7 @@ namespace smt::noodler {
                 rem_ids.insert(pr.first);
             }
         }
+        
         for(const size_t & i : rem_ids) {
             this->formula.remove_predicate(i);
         }
@@ -1190,6 +1184,118 @@ namespace smt::noodler {
             this->formula.add_predicate(pr);
         }
     }
+
+    /**
+     * @brief calculate if a variable contains some constant symbol
+     */
+    void FormulaPreprocessor::calc_alphabet_and_split(const std::map<std::string, std::unordered_set<std::string>>& alphabet_of_var) {
+        const auto& split_concat = [&](const std::vector<BasicTerm>& con) {
+            std::vector<BasicTerm> ret;
+            for(const BasicTerm& bt : con) {
+                if(bt.is_literal()) {
+                    zstring name = bt.get_name();
+                    for(size_t i = 0; i < name.length(); ++i) {
+                        ret.emplace_back(BasicTerm(BasicTermType::Literal, zstring(name[i])));
+                    }
+                } else {
+                    ret.push_back(bt);
+                }
+            }
+            return ret;
+        };
+        std::set<size_t> rem_ids;
+        std::set<Predicate> add_eqs;
+
+        for(const auto& pr : this->formula.get_predicates()) {
+            if(!pr.second.is_equation())
+                continue;
+            auto ls = pr.second.get_params();
+            std::unordered_set<BasicTerm> lites;
+            for(const auto& l : ls) {
+                auto sls = split_concat(l);
+                for(const auto& sl:sls)
+                    if(sl.is_literal())lites.insert(sl);
+            }
+            std::map<BasicTerm,int> coff;
+            std::vector<BasicTerm> left_terms = split_concat(pr.second.get_left_side());
+            std::vector<BasicTerm> right_terms = split_concat(pr.second.get_right_side());
+            size_t l_sz = left_terms.size(),r_sz = right_terms.size();
+            for(size_t i = 0;i<l_sz;i++){
+                    if(coff.find(left_terms[i])==coff.end())coff[left_terms[i]]=0;
+                    coff[left_terms[i]]++;
+            }
+            for(size_t i = 0;i<r_sz;i++){
+                    BasicTerm var_name = right_terms[i];
+                    if(coff.find(var_name)==coff.end())coff[var_name]=0;
+                    coff[var_name]--;
+            }
+            for(const auto& lt : lites) {
+                if(coff[lt]!=0)continue;
+                bool allLeft = true, allRight = true;
+                std::unordered_set<BasicTerm> vars;
+                auto ini_vars = pr.second.get_vars();
+                auto lname = lt.to_string();
+                size_t t_len = lname.length();
+                lname = lname.substr(1, t_len - 2);
+                for(const auto& v : ini_vars) {
+                    if(coff[v]==0)continue;
+                    if(alphabet_of_var.find(v.to_string()) != alphabet_of_var.end()
+                        && alphabet_of_var.at(v.to_string()).find(lname) == alphabet_of_var.at(v.to_string()).end()) {
+                        vars.insert(v);
+                        continue;
+                    }
+                    if(coff[v]>0)allRight = false;
+                    if(coff[v]<0)allLeft = false;
+                    vars.insert(v);
+                }
+                if(allLeft || allRight) {
+                    size_t szl = left_terms.size(), szr = right_terms.size();
+                    size_t posl = 0, posr = 0;
+                    while(true){
+                        Concat new_left;
+                        Concat new_right;
+                        while(posl < szl&&left_terms[posl] != lt){
+                            if(left_terms[posl].is_variable()&&vars.find(left_terms[posl])==vars.end())break;
+                            new_left.push_back(left_terms[posl]);
+                            posl++;
+                        }
+                        while(posr < szr&&right_terms[posr] != lt){
+                            if(right_terms[posr].is_variable()&&vars.find(right_terms[posr])==vars.end())break;
+                            new_right.push_back(right_terms[posr]);
+                            posr++;
+                        }
+                        if(posl < szl && posr < szr && left_terms[posl] == lt && right_terms[posr] == lt) {
+                            rem_ids.insert(pr.first);
+                            add_eqs.insert(Predicate::create_equation(new_left, new_right));
+                            posl++;
+                            posr++;
+                        }else{
+                            while(posl<szl){
+                                new_left.push_back(left_terms[posl]);
+                                posl++;
+                            }
+                            while(posr<szr){
+                                new_right.push_back(right_terms[posr]);
+                                posr++;
+                            }
+                            rem_ids.insert(pr.first);
+                            add_eqs.insert(Predicate::create_equation(new_left, new_right));
+                            break;
+                        }
+                    } 
+                    break;
+                }
+            }
+            
+        }
+        for(const Predicate& eq : add_eqs) {
+            this->formula.add_predicate(eq);
+        }
+        for(const size_t & i : rem_ids) {
+            this->formula.remove_predicate(i);
+        }
+    }
+
     /**
      * @brief Remove trivial equations of the form X = X
      */
@@ -1281,11 +1387,9 @@ namespace smt::noodler {
                     auto tmp = Predicate::create_transducer(std::make_shared<mata::nft::Nft>(tmp_nft),
                     tmp_pr[pos].get_input(),tmp_pr[pos].get_output());
                     ret.add_predicate(tmp);
-                    STRACE(str,tout<<tmp.to_string()<<" mocha\n";);
                 }
             }
         }
-        // STRACE("mocha-ins",tout<<"finished\n";);
         
         return ret;
     }
@@ -2036,6 +2140,55 @@ namespace smt::noodler {
         }
         STRACE(str_prep, tout << print_info(is_trace_enabled(TraceTag::str_nfa)));
         return true;
+    }
+
+    /**
+     * @brief Check if the formula contains unsat transducer constraints. 
+     * It focuses on constraints of the form T_1(x,y) && T_2(x,y). The preprocessing
+     * reduces unsatifiability checking by transforming to checking if there is 
+     * some (w,w) in the language of the transducer.
+     */
+    bool FormulaPreprocessor::has_unsat_transducers() {
+        // map groups transducers by their inputs/outputs (i.e., the equation formed by their input and output concatenation)
+        std::map<Predicate, std::vector<std::shared_ptr<mata::nft::Nft>>> transducers_by_io{};
+        std::set<size_t> rem_ids {};
+        // collect transducers with the identical parameters 
+        for(const auto& [id, pred] : this->formula.get_predicates()) {
+            if(!pred.is_transducer()) {
+                continue;
+            }
+            transducers_by_io[Predicate::create_equation(pred.get_input(), pred.get_output())].push_back(pred.get_transducer());
+        }
+
+        for(const auto& [pred, trans] : transducers_by_io) {
+            if(trans.size() == 1) {
+                continue;
+            }
+            // TODO: for simplicity, we assume only one input variable in the concatenation. It could be generalized 
+            // to multiple input variables by concatenating NFAs for them, removing epsilons and composing with the transducer.
+            if(pred.get_left_side().size() > 1) {
+                continue;
+            }
+            mata::nft::Nft nft = *(trans[0]);
+
+            auto nfa = this->aut_ass.at(pred.get_left_side()[0]);
+
+            // restrict the input variable --> T_1(Aut(x), y)
+            // it is not necessary for correctness, but it makes the heuristics later more succesful
+            mata::nft::Nft lang_nft(*nfa, 2);
+            nft = mata::nft::compose(lang_nft, nft, 0, 0, true);
+            // compose first tapes of all transducers with identical parameters (and project out the synchronizing tape)
+            // nft = [T_1(y), T_2(y), ...]
+            for(size_t i = 1; i < trans.size(); i++) {
+                auto tr = mata::nft::compose(lang_nft, *trans[i], 0, 0, true);
+                nft = mata::nft::compose(nft, tr, 0, 0, true);
+            }
+
+            if(util::contains_trans_identity(nft, 4) == l_false) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

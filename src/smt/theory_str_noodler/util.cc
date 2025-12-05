@@ -20,6 +20,13 @@ namespace smt::noodler::util {
 #endif
     }
 
+    void check_limit(ast_manager& m) {
+        if (m.limit().is_canceled()) {
+            STRACE(str, tout << "LIMIT REACHED\n";);
+            throw default_exception("Limit reached");
+        }
+    }
+
     void get_str_variables(expr* const ex, const seq_util& m_util_s, const ast_manager& m, obj_hashtable<expr>& res, obj_map<expr, expr*>* pred_map) {
         if(m_util_s.str.is_string(ex)) {
             return;
@@ -34,17 +41,15 @@ namespace smt::noodler::util {
         app* ex_app{ to_app(ex) };
         if(pred_map != nullptr) {
             expr* rpl;
-            if(pred_map->find(ex_app, rpl) && !(m_util_s.str.is_replace_all(rpl) || m_util_s.str.is_replace_re_all(rpl))) {
+            if(pred_map->find(ex_app, rpl)) {
                 get_str_variables(rpl, m_util_s, m, res, pred_map);
             }
         }
 
-        if (!(m_util_s.str.is_replace_all(ex) || m_util_s.str.is_replace_re_all(ex))) {
-            for(unsigned i = 0; i < ex_app->get_num_args(); i++) {
-                SASSERT(is_app(ex_app->get_arg(i)));
-                app *arg = to_app(ex_app->get_arg(i));
-                get_str_variables(arg, m_util_s, m, res, pred_map);
-            }
+        for(unsigned i = 0; i < ex_app->get_num_args(); i++) {
+            SASSERT(is_app(ex_app->get_arg(i)));
+            app *arg = to_app(ex_app->get_arg(i));
+            get_str_variables(arg, m_util_s, m, res, pred_map);
         }
     }
 
@@ -318,5 +323,265 @@ namespace smt::noodler::util {
             }
         }
         return true;
+    }
+
+    lbool contains_trans_identity(const mata::nft::Nft& transducer, unsigned length) {
+        // State represents a node in the BFS: automaton state + tape histories
+        struct State {
+            mata::nft::State state; // current automaton state
+            std::vector<std::vector<mata::Symbol>> tapes; // history of symbols for each tape
+
+            /**
+             * Constructor for State.
+             * @param s The current automaton state.
+             * @param num_tapes The number of tapes (levels) in the transducer.
+             * Initializes each tape's history as an empty vector.
+             */
+            State(mata::nft::State s, unsigned num_tapes) : state(s), tapes(num_tapes) {}
+
+            /**
+             * Equality operator for State.
+             * @param other The state to compare with.
+             * @return True if both the automaton state and all tape histories are equal.
+             */
+            bool operator==(const State& other) const {
+                if (state != other.state) {
+                    return false;
+                }
+                return tapes == other.tapes;
+            }
+
+            /**
+             * Ordering operator for State (for use in std::set).
+             * @param other The state to compare with.
+             * @return True if this state is ordered before the other.
+             */
+            bool operator<(const State& other) const {
+                if (state < other.state) {
+                    return true;
+                }
+                if (state > other.state) {
+                    return false;
+                }
+                return tapes < other.tapes;
+            }
+
+            /**
+             * Checks if any tape differs from the first tape at any position (i.e., not a prefix of identity).
+             * In other words the tapes cannot cannot be extended to something having same symbols on all tapes 
+             * (e.g., [a, ab] is ok, but [ab, ac] is not).
+             * TODO: so-far the function is not able to detect e.g., [ abc, abce, abcd ]
+             * @return True if any tape is not a prefix of the first tape; false otherwise.
+             */
+            bool is_not_prefix() const {
+                size_t sz = tapes[0].size();
+                for(size_t i = 0; i < sz; i++) {
+                    for(size_t j = 1; j < tapes.size(); j++) {
+                        if(tapes[j].size() <= i) {
+                            continue;
+                        } 
+                        if (tapes[j][i] != tapes[0][i]) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            /**
+             * Checks if all tapes are of equal length and have identical symbols at each position (i.e., identity relation).
+             * @return True if all tapes are identical; false otherwise.
+             */
+            bool is_identity() const {
+                size_t sz = tapes[0].size();
+                for(size_t i = 0; i < sz; i++) {
+                    for(size_t j = 1; j < tapes.size(); j++) {
+                        if(tapes[j].size() != sz) {
+                            return false;
+                        }
+                        if (tapes[j][i] != tapes[0][i]) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            /**
+             * Returns a new State after reading/writing a symbol on the given tape.
+             * @param sym The symbol to write (if not EPSILON).
+             * @param tape The tape index to write the symbol to.
+             * @return A new State with the updated tape history.
+             */
+            State step_state(mata::Symbol sym, unsigned tape) {
+                State copy(*this);
+                if(sym != mata::nft::EPSILON) {
+                    copy.tapes[tape].push_back(sym);
+                }
+                return copy;
+            }
+
+            /**
+             * Returns the maximum length of any tape in this state.
+             * @return The maximum tape length.
+             */
+            size_t max_length() {
+                size_t length = 0;
+                for(size_t i = 0; i < tapes.size(); i++) {
+                    if(tapes[i].size() > length) {
+                        length = tapes[i].size();
+                    }
+                }
+                return length;
+            }
+        };
+
+        // BFS over state space: (automaton state, tape histories)
+        std::set<State> visited_states;
+        std::deque<State> queue;
+        for(mata::nft::State initial_state : transducer.initial) {
+            queue.emplace_back(initial_state, transducer.num_of_levels);
+        }
+        while(!queue.empty()) {
+            State current_state = queue.front();
+            queue.pop_front();
+            if(visited_states.contains(current_state)) {
+                continue;
+            }
+            visited_states.insert(current_state);
+            // Prune if not a prefix of identity
+            if(current_state.is_not_prefix()) {
+                continue;
+            }
+            // Accept if in final state and all tapes are identical of required length
+            if(transducer.final.contains(current_state.state) && current_state.is_identity()) {
+                return l_true;
+            }
+            // If any tape exceeds the required length, stop exploring this path
+            if(current_state.max_length() > length) {
+                return l_undef;
+            }
+            // Explore all transitions from current state
+            for(const auto& post : transducer.delta[current_state.state]) {
+                for(mata::nft::State dest : post.targets) {
+                    State next_state = current_state.step_state(post.symbol, transducer.levels[current_state.state]);
+                    next_state.state = dest;
+                    queue.push_back(next_state);
+                }
+            }
+        }
+        return l_false;
+    }
+
+    std::optional<std::vector<mata::Word>> get_word_from_nft(const mata::nft::Nft nft, const std::vector<unsigned>& lengths, const std::set<mata::nft::State>& potentional_initial_states, const std::map<mata::nft::Transition,std::shared_ptr<unsigned>>& num_of_transitions_passes) {
+        STRACE(str_model_transducer,
+            if (is_trace_enabled(TraceTag::str_model_nfa)) {
+                tout << "Potentional initial states:";
+                for (mata::nft::State s : potentional_initial_states) {
+                    tout << " " << s;
+                }
+                tout << std::endl;
+            }
+        );
+        assert(nft.num_of_levels == lengths.size());
+        assert(!nft.contains_jump_transitions());
+        if (potentional_initial_states.empty() || nft.final.empty()) { return std::nullopt; }
+        if (nft.initial.intersects_with(nft.final) && std::ranges::all_of(lengths, [](int x) { return x == 0; })) { return std::vector<mata::Word>(nft.num_of_levels, mata::Word()); }
+        STRACE(str_model_transducer,
+            if (is_trace_enabled(TraceTag::str_model_nfa)) {
+                tout << "Transitions with number of times we have to pass them (some number can be shared):\n";
+                for (const auto& [trans, value] : num_of_transitions_passes) {
+                    tout << trans << " : " << *value << " " << value << "\n";
+                }
+            }
+        );
+
+        for (const mata::nft::State initial_state: potentional_initial_states) {
+            std::vector<mata::Word> result(lengths.size());
+            std::map<mata::nft::Transition,std::shared_ptr<unsigned>> cur_num_of_transitions_passes = num_of_transitions_passes;
+            /// Current state, its state post iterator, its end iterator, and iterator in the current symbol post to target states.
+            std::vector<std::tuple<mata::nft::State, mata::nft::StatePost::const_iterator, mata::nft::StatePost::const_iterator, mata::nft::StateSet::const_iterator>> worklist{};
+            auto is_result_correct = [&result, &lengths]() {
+                for (size_t i = 0; i < lengths.size(); ++i) {
+                    if (result[i].size() != lengths[i]) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            const mata::nft::StatePost& initial_state_post{ nft.delta[initial_state] };
+            auto initial_symbol_post_it{ initial_state_post.cbegin() };
+            auto initial_symbol_post_end{ initial_state_post.cend() };
+
+            if (initial_symbol_post_it == initial_symbol_post_end) { continue; }
+
+            worklist.emplace_back(initial_state, initial_symbol_post_it, initial_symbol_post_end, initial_symbol_post_it->targets.cbegin());
+
+            while (!worklist.empty()) {
+                STRACE(str_model_transducer,
+                    if (is_trace_enabled(TraceTag::str_model_nfa)) {
+                        for (const auto& [state, _a, _b, _c] : worklist) {
+                            tout << state << " ";
+                        }
+                        tout << std::endl;
+                    }
+                );
+
+                // Using references to iterators to be able to increment the top-most element in the worklist in place.
+                auto& [cur_state, state_post_it, state_post_end, targets_it]{ worklist.back() };
+                if (state_post_it != state_post_end) {
+                    mata::Symbol cur_symbol = state_post_it->symbol;
+                    mata::nft::Level cur_level = nft.levels[cur_state];
+                    if (targets_it == state_post_it->targets.cend() || (cur_symbol != mata::nft::EPSILON && lengths[cur_level] == result[cur_level].size())) {
+                        ++state_post_it;
+                        if (state_post_it != state_post_end) { targets_it = state_post_it->cbegin(); }
+                    } else {
+                        mata::nft::Transition cur_transition{cur_state, cur_symbol, *targets_it};
+                        if (!cur_num_of_transitions_passes.contains(cur_transition) || *cur_num_of_transitions_passes.at(cur_transition) == 0) {
+                            ++targets_it;
+                        } else {
+                            if (cur_symbol != mata::nft::EPSILON) {
+                                result[cur_level].push_back(cur_symbol);
+                            }
+                            --(*cur_num_of_transitions_passes.at(cur_transition));
+                            if (nft.final.contains(*targets_it) && is_result_correct()) {
+                                return result;
+                            }
+                            const mata::nft::StatePost& state_post{ nft.delta[*targets_it] };
+                            if (!state_post.empty()) {
+                                auto new_state_post_it{ state_post.cbegin() };
+                                auto new_targets_it{ new_state_post_it->cbegin() };
+                                worklist.emplace_back(*targets_it, new_state_post_it, state_post.cend(), new_targets_it);
+                            } else {
+                                if (cur_symbol != mata::nft::EPSILON) {
+                                    result[cur_level].pop_back();
+                                }
+                                ++(*cur_num_of_transitions_passes.at(cur_transition));
+                                ++targets_it;
+                            }
+                        }
+                    }
+                } else { // state_post_it == state_post_end.
+                    worklist.pop_back();
+                    if (!worklist.empty()) {
+                        auto& [prev_state, prev_state_post_it, prev_state_post_end, prev_targets_it]{ worklist.back() };
+                        assert(prev_state_post_it != prev_state_post_end);
+                        mata::Symbol prev_symbol = prev_state_post_it->symbol;
+                        mata::nft::Level prev_level = nft.levels[prev_state];
+                        if (prev_symbol != mata::nft::EPSILON) {
+                            assert(!result[prev_level].empty() && result[prev_level].back() == prev_symbol);
+                            result[prev_level].pop_back();
+                        }
+                        assert(prev_targets_it != prev_state_post_it->targets.cend());
+                        mata::nft::Transition prev_transition{prev_state, prev_symbol, *prev_targets_it};
+                        ++(*cur_num_of_transitions_passes.at(prev_transition));
+                        ++prev_targets_it;
+                    }
+                }
+            }
+        }
+
+        return std::nullopt;
     }
 }

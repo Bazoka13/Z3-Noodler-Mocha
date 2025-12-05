@@ -5429,6 +5429,65 @@ void seq_rewriter::elim_condition(expr* elem, expr_ref& cond) {
 }
 
 
+bool seq_rewriter::is_wildcard(expr* ep){
+    //TODO: weird implementation, changes needed.
+    expr* l, *r, *r2,*r3,*s;
+    std::function<bool(expr*)> visit;
+    visit = [&](expr* e) {
+        if(re().is_concat(e)){
+            for (expr* arg : *to_app(e)){
+                if(visit(arg))continue;
+                return false;
+            }
+            return true;
+        }else if(re().is_full_char(e)){
+            return true;
+        }else if(re().is_to_re(e,s)&&str().is_string(s)){
+            return true;
+        }else if(re().is_full_seq(e)||
+                    (re().is_star(e, r2)&& (re().is_full_char(r2)||re().is_full_seq(r2))) ){
+            return true;
+        }else if(re().is_plus(e, r3)&& (re().is_full_char(r3)||re().is_full_seq(r3))){
+            return true;
+        }else{
+            return false;
+        }
+    };
+    return visit(ep);
+}
+bool seq_rewriter::wildcard_matched(expr* r1,expr* r2){
+    std::function<std::string(expr*)> trans;
+    trans = [&](expr* exp){
+        std::string res;
+        expr *r2,*s,*r3;
+        zstring zs;
+        std::function<void(expr*)> visit;
+        visit = [&](expr* e) {
+            if(re().is_concat(e)){
+                for (expr* arg : *to_app(e))
+                    visit(arg);
+            }else if(re().is_full_char(e)){
+                res.append("-");
+            }else if(re().is_to_re(e,s)&&str().is_string(s,zs)){
+                res.append(zs.encode());
+            }else if(re().is_full_seq(e)||
+                        (re().is_star(e, r2)&& (re().is_full_char(r2)||re().is_full_seq(r2))) ){
+                res.append("*");
+            }else if(re().is_plus(e, r3)&& (re().is_full_char(r3)||re().is_full_seq(r3))){
+                if(re().is_full_char(r3))
+                    res.append("-");
+                res.append("*");
+            }else{
+                exit(-1);
+            }
+        };
+        visit(exp);
+        return res;
+    };
+    auto s1 = trans(r1),s2=trans(r2);
+    return mmatch(s1,s2);
+}
+
 
 br_status seq_rewriter::reduce_re_is_empty(expr* r, expr_ref& result) {
     expr* r1, *r2, *r3, *r4;
@@ -5484,6 +5543,11 @@ br_status seq_rewriter::reduce_re_is_empty(expr* r, expr_ref& result) {
     else if (re().is_intersection(r, r1, r2) && re().is_union(r2, r3, r4)) {
         result = eq_empty(re().mk_union(re().mk_inter(r3, r1), re().mk_inter(r4, r1)));
         return BR_REWRITE3;
+    }else if(re().is_intersection(r,r1,r2) && is_wildcard(r1) && is_wildcard(r2)){
+        if(wildcard_matched(r1,r2)){
+            result = m().mk_false();
+        }else result = m().mk_true();
+        return BR_DONE;
     }
     return BR_FAILED;
 }

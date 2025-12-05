@@ -107,13 +107,21 @@ namespace smt::noodler {
             for (const mata::Symbol& symb : alph.alphabet) {
                 intersection.delta.add(0, symb, 0);
             }
-
+            STRACE(str_mult_memb_heur, tout << "trying intersection " <<list_of_normal_regs.size()<<std::endl;);
             bool first = true;
             for (auto& reg : list_of_normal_regs) {
-                intersection = mata::nfa::intersection(regex::conv_to_nfa(reg, m_util_s, m, alph, false, false), intersection);
+                mata::nfa::Nfa temp{};
+                if(memorized_nfa.find(reg->hash())!=memorized_nfa.end()){
+                    temp = memorized_nfa[reg->hash()];
+                }else{
+                    temp = regex::conv_to_nfa(reg, m_util_s, m, alph, false, false);
+                    memorized_nfa[reg->hash()] = temp;
+                }
+                // mata::nfa::Nfa temp = regex::conv_to_nfa(reg, m_util_s, m, alph, false, false);
+                // STRACE(str_mult_memb_heur, tout << "trying intersection "  << std::endl;regex::conv_to_nfa(reg, m_util_s, m, alph, false, false).print_to_dot(tout);tout<<std::endl;);
+                intersection = mata::nfa::intersection(intersection, temp);
                 if (!first // for first iteration we won't do reduction, as it would just be done twice, once in conv_to_nfa and once here
-                    && intersection.num_of_states() < regex::RED_BOUND)
-                {
+                    && intersection.num_of_states() < regex::RED_BOUND){
                     intersection = mata::nfa::reduce(intersection);
                 }
                 first = false;
@@ -122,12 +130,19 @@ namespace smt::noodler {
                     return l_false;
                 }
             }
-
+            TRACE(str_mult_memb_heur, tout << "trying intersection " <<std::endl;);
             // Compute union L' of all regexes that should be complemented (we are using de Morgan)
             mata::nfa::Nfa unionn; // initialize to empty automaton
             first = true;
             for (auto& reg : list_of_compl_regs) {
-                unionn = mata::nfa::union_nondet(regex::conv_to_nfa(reg, m_util_s, m, alph, false, false), unionn);
+                mata::nfa::Nfa temp{};
+                if(memorized_nfa.find(reg->hash())!=memorized_nfa.end()){
+                    temp = memorized_nfa[reg->hash()];
+                }else{
+                    temp = regex::conv_to_nfa(reg, m_util_s, m, alph, false, false);
+                    memorized_nfa[reg->hash()] = temp;
+                }
+                unionn = mata::nfa::union_nondet(temp, unionn);
                 if (!first // for first iteration we won't do reduction, as it would just be done twice, once in conv_to_nfa and once here
                     && unionn.num_of_states() < regex::RED_BOUND)
                 {
