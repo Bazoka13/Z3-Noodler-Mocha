@@ -22,10 +22,7 @@ Z3-Noodler-Mocha is an SMT solver for string constraint which is based on [Z3-No
     ```
 
 ### Running Z3-Noodler-Mocha
-To run Z3-Noodler-Mocha, use:
-    ```shell
-    ./build/z3 xxx.smt2
-    ```
+To run Z3-Noodler-Mocha, use `./build/z3 xxx.smt2`
 
 ### Acknowledgment
 We would like to thank the developers of the Z3-Noodler solver and all the authors who contributed to the modifications that have been integrated. Their solver is the foundation of our improvement.
